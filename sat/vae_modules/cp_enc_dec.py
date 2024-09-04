@@ -807,23 +807,23 @@ class ContextParallelEncoder3D(nn.Module):
             kernel_size=3,
         )
 
-    def forward(self, x):
+    def forward(self, x, clear_fake_cp_cache=True):
         # timestep embedding
         temb = None
 
         # downsampling
-        h = self.conv_in(x)
+        h = self.conv_in(x, clear_cache=clear_fake_cp_cache)
         for i_level in range(self.num_resolutions):
             for i_block in range(self.num_res_blocks):
-                h = self.down[i_level].block[i_block](h, temb)
+                h = self.down[i_level].block[i_block](h, temb, clear_fake_cp_cache=clear_fake_cp_cache)
                 if len(self.down[i_level].attn) > 0:
                     h = self.down[i_level].attn[i_block](h)
             if i_level != self.num_resolutions - 1:
                 h = self.down[i_level].downsample(h)
 
         # middle
-        h = self.mid.block_1(h, temb)
-        h = self.mid.block_2(h, temb)
+        h = self.mid.block_1(h, temb, clear_fake_cp_cache=clear_fake_cp_cache)
+        h = self.mid.block_2(h, temb, clear_fake_cp_cache=clear_fake_cp_cache)
 
         # end
         # h = conv_gather_from_context_parallel_region(h, dim=2, kernel_size=1)
@@ -831,7 +831,7 @@ class ContextParallelEncoder3D(nn.Module):
         # h = conv_scatter_to_context_parallel_region(h, dim=2, kernel_size=1)
 
         h = nonlinearity(h)
-        h = self.conv_out(h)
+        h = self.conv_out(h, clear_cache=clear_fake_cp_cache)
 
         return h
 

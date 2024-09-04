@@ -220,8 +220,9 @@ class AutoencodingEngine(AbstractAutoencoder):
         x: torch.Tensor,
         return_reg_log: bool = False,
         unregularized: bool = False,
+        **kwargs,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, dict]]:
-        z = self.encoder(x)
+        z = self.encoder(x, **kwargs)
         if unregularized:
             return z, dict()
         z, reg_log = self.regularization(z)
@@ -592,6 +593,7 @@ class VideoAutoencoderInferenceWrapper(VideoAutoencodingEngine):
         unregularized: bool = False,
         input_cp: bool = False,
         output_cp: bool = False,
+        **kwargs,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, dict]]:
         if self.cp_size > 0 and not input_cp:
             if not is_context_parallel_initialized:
@@ -603,9 +605,9 @@ class VideoAutoencoderInferenceWrapper(VideoAutoencodingEngine):
             x = _conv_split(x, dim=2, kernel_size=1)
 
         if return_reg_log:
-            z, reg_log = super().encode(x, return_reg_log, unregularized)
+            z, reg_log = super().encode(x, return_reg_log, unregularized, **kwargs)
         else:
-            z = super().encode(x, return_reg_log, unregularized)
+            z = super().encode(x, return_reg_log, unregularized, **kwargs)
 
         if self.cp_size > 0 and not output_cp:
             z = _conv_gather(z, dim=2, kernel_size=1)

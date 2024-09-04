@@ -1,0 +1,17 @@
+args:
+  train_data: ["data/openvid/metadata/OpenVidHD_stats.jsonl"]
+  valid_data: ["data/openvid/metadata/OpenVidHD_stats.jsonl"]
+  split: 1,0,0
+  num_workers: 2
+
+data:
+    target: data_video_oci.SftJsonlDataset
+    params:
+      video_folder: data/openvid/videos/
+      text_key: text
+      video_size: [480, 720]
+      # fps: 8
+      # max_num_frames: 49
+      fps: 24
+      max_num_frames: 145
+      skip_frms_num: 3.

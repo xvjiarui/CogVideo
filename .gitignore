@@ -8,3 +8,12 @@ logs/
 .idea
 output*
 test*
+
+sat/checkpoints/
+data/
+sat/data/
+sat/output
+sat/checkpoints
+debug/
+resources/videos
+*.code-workspace

@@ -8,9 +8,114 @@ from omegaconf import OmegaConf
 from sat.helpers import print_rank0
 from sat import mpu
 from sat.arguments import set_random_seed
-from sat.arguments import add_training_args, add_evaluation_args, add_data_args
+from sat.arguments import add_evaluation_args, add_data_args
 import torch.distributed
 
+def add_training_args(parser):
+    """Training arguments."""
+
+    group = parser.add_argument_group('train', 'training configurations')
+
+    # --------------- Core hyper-parameters --------------- 
+    group.add_argument('--experiment-name', type=str, default="",
+                       help="The experiment name for summary and checkpoint."
+                       "Will load the previous name if mode==pretrain and with --load ")
+    group.add_argument('--tag', type=str, default="")
+    group.add_argument('--train-iters', type=int, default=None,
+                       help='total number of iterations to train over all training runs')
+    group.add_argument('--batch-size', type=int, default=4,
+                       help='batch size on a single GPU. batch-size * world_size = total batch_size.')
+    group.add_argument('--lr', type=float, default=1.0e-4,
+                       help='initial learning rate')
+    group.add_argument('--mode', type=str,
+                       default='pretrain',
+                       choices=['pretrain', # from_scratch / load ckpt for continue pretraining.
+                                'finetune', # finetuning, auto-warmup 100 iters, new exp name.
+                                'inference' # don't train.
+                                ],
+                       help='what type of task to use, will influence auto-warmup, exp name, iteration')
+    group.add_argument('--seed', type=int, default=1234, help='random seed')
+    group.add_argument('--zero-stage', type=int, default=0, choices=[0, 1, 2, 3], 
+                        help='deepspeed ZeRO stage. 0 means no ZeRO.')
+
+    # ---------------  Optional hyper-parameters --------------- 
+
+    # Efficiency.
+    group.add_argument('--checkpoint-activations', action='store_true',
+                       help='checkpoint activation to allow for training '
+                            'with larger models and sequences. become slow (< 1.5x), save CUDA memory.')
+    # Inessential
+    group.add_argument('--checkpoint-num-layers', type=int, default=1, 
+                       help='chunk size (number of layers) for checkpointing. ')
+    group.add_argument('--checkpoint-skip-layers', type=int, default=0,
+                       help='skip the last N layers for checkpointing.')
+    
+    group.add_argument('--fp16', action='store_true',
+                       help='Run model in fp16 mode')
+    group.add_argument('--bf16', action='store_true',
+                       help='Run model in bf16 mode')
+    group.add_argument('--gradient-accumulation-steps', type=int, default=1, 
+                       help='run optimizer after every gradient-accumulation-steps backwards.')
+
+    group.add_argument('--profiling', type=int, default=-1,
+                       help='profiling, -1 means no profiling, otherwise means warmup args.profiling iters then profiling.')
+    group.add_argument('--epochs', type=int, default=None,
+                       help='number of train epochs')
+    group.add_argument('--log-interval', type=int, default=50,
+                       help='report interval')
+    group.add_argument('--summary-dir', type=str, default="", help="The directory to store the summary")
+    group.add_argument('--save-args', action='store_true',
+                       help='save args corresponding to the experiment-name')
+
+    # Learning rate & weight decay.
+    group.add_argument('--lr-decay-iters', type=int, default=None,
+                       help='number of iterations to decay LR over,'
+                            ' If None defaults to `--train-iters`*`--epochs`')
+    group.add_argument('--lr-decay-style', type=str, default='linear',
+                       choices=['constant', 'linear', 'cosine', 'exponential'],
+                       help='learning rate decay function')
+    group.add_argument('--lr-decay-ratio', type=float, default=0.1)
+    
+    group.add_argument('--warmup', type=float, default=0.01,
+                       help='percentage of data to warmup on (.01 = 1% of all '
+                            'training iters). Default 0.01')
+    group.add_argument('--weight-decay', type=float, default=0.01,
+                       help='weight decay coefficient for L2 regularization')
+    
+    # model checkpointing
+    group.add_argument('--save', type=str, default=None,
+                       help='Output directory to save checkpoints to.')
+    group.add_argument('--load', type=str, default=None,
+                       help='Path to a directory containing a model checkpoint.')
+    group.add_argument('--resume', type=str, default=None,
+                       help='Path to resume model training.')
+    group.add_argument('--force-train', action='store_true',
+                       help='Force training even with missing keys.')
+    group.add_argument('--save-interval', type=int, default=5000,
+                       help='number of iterations between saves')
+    group.add_argument('--no-save-rng', action='store_true',
+                       help='Do not save current rng state.')
+    group.add_argument('--no-load-rng', action='store_true',
+                       help='Do not load rng state when loading checkpoint.')
+    group.add_argument('--resume-dataloader', action='store_true',
+                       help='Resume the dataloader when resuming training. ') 
+
+    # distributed training related, don't use them.
+    group.add_argument('--distributed-backend', default='nccl',
+                       help='which backend to use for distributed '
+                            'training. One of [gloo, nccl]')
+    group.add_argument('--local_rank', type=int, default=None,
+                       help='local rank passed from distributed launcher')
+
+    # exit, for testing the first period of a long training
+    group.add_argument('--exit-interval', type=int, default=None,
+                       help='Exit the program after this many new iterations.')
+
+    group.add_argument('--wandb', action="store_true", help='whether to use wandb')
+    group.add_argument('--wandb-project-name', type=str, default="cogvideo",
+                       help="The project name in wandb.")
+    
+    return parser
 
 def add_model_config_args(parser):
     """Model arguments"""
@@ -47,11 +152,12 @@ def add_sampling_config_args(parser):
     group.add_argument("--only-log-video-latents", type=bool, default=False)
     group.add_argument("--latent-channels", type=int, default=32)
     group.add_argument("--image2video", action="store_true")
+    group.add_argument("--resume-iter", type=int, default=None, help="Resume from a specific iteration")
 
     return parser
 
 
-def get_args(args_list=None, parser=None):
+def get_args(args_list=None, parser=None, init_dist=True):
     """Parse all the args."""
     if parser is None:
         parser = argparse.ArgumentParser(description="sat")
@@ -68,8 +174,20 @@ def get_args(args_list=None, parser=None):
     parser = deepspeed.add_config_arguments(parser)
 
     args = parser.parse_args(args_list)
+    # Collect arguments that are using default values
+    default_args = {key: value for key, value in vars(args).items() if parser.get_default(key) == value}
+    # Collect arguments that were explicitly passed
+    passed_args = {key: value for key, value in vars(args).items() if key not in default_args and key != 'base'}
     args = process_config_to_args(args)
+    for key in passed_args:
+        setattr(args, key, passed_args[key])
+    
+    if init_dist:
+        init_distributed_mode(args)
+    return args
 
+
+def init_distributed_mode(args):
     if not args.train_data:
         print_rank0("No training data specified", level="WARNING")
 
@@ -168,12 +286,11 @@ def get_args(args_list=None, parser=None):
                 args.lr = optimizer_params_config.get("lr", args.lr)
                 args.weight_decay = optimizer_params_config.get("weight_decay", args.weight_decay)
         args.deepspeed_config = deepspeed_config
-
+    
     # initialize distributed and random seed because it always seems to be necessary.
     initialize_distributed(args)
     args.seed = args.seed + mpu.get_data_parallel_rank()
     set_random_seed(args.seed)
-    return args
 
 
 def initialize_distributed(args):
@@ -279,3 +396,14 @@ def process_config_to_args(args):
         args.data_config = data_config
 
     return args
+
+# def set_configs_to_args(args, args_config):
+#     for key in args_config:
+#         if isinstance(args_config[key], omegaconf.DictConfig) or isinstance(args_config[key], omegaconf.ListConfig):
+#             arg = OmegaConf.to_object(args_config[key])
+#         else:
+#             arg = args_config[key]
+#         assert hasattr(args, key), f"args has no attribute {key}"
+#         setattr(args, key, arg)
+    
+#     return args
