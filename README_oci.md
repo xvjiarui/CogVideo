@@ -1,5 +1,6 @@
 ```bash
-mamba install pytorch=2.4.0 torchvision torchaudio pytorch-cuda=12.1 cuda=12.1 -c pytorch -c nvidia
+# mamba install pytorch=2.4.0 torchvision torchaudio pytorch-cuda=12.1 cuda=12.1 -c pytorch -c nvidia
+mamba install pytorch=2.4.0 torchvision torchaudio pytorch-cuda=12.1 cuda=12.1 -c pytorch -c nvidia/label/cuda-12.1.1 -c nvidia/label/cuda-12.1.0
 pip install -r sat/requirements_oci.txt
 ```
 

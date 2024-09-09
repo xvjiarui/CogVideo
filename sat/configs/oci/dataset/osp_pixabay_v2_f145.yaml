@@ -1,0 +1,16 @@
+args:
+  train_data: ["data/open-sora-plan-v110/metadata/pixabay_v2/video_pixabay_65f_601513_fps.jsonl"]
+  valid_data: ["data/open-sora-plan-v110/metadata/pixabay_v2/video_pixabay_65f_601513_fps.jsonl"]
+  split: 1,0,0
+  num_workers: 2
+
+data:
+    target: data_video_oci.SftJsonlDatasetV2
+    params:
+      video_folder: data/open-sora-plan-v110/pixabay_v2/
+      text_key: caps
+      sub_text_key: cap
+      video_size: [480, 720]
+      fps: 8
+      max_num_frames: 145
+      skip_frms_num: 0.

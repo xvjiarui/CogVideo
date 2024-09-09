@@ -6,9 +6,9 @@ args:
   input_type: txt
   input_file: configs/test.txt
   # sampling_num_frames: 13  # Must be 13, 11 or 9
-  # sampling_fps: 8
+  sampling_fps: 8
   sampling_num_frames: 37  # Must be 13, 11 or 9
-  sampling_fps: 24
+  # sampling_fps: 24
   fp16: True
   output_dir: output/inference
   force_inference: True
@@ -71,11 +71,6 @@ model:
             # init_compressed_num_frames: 13
             time_interpolation: 2.846
 
-        lora_config: ## Using Lora
-          target: sat.model.finetune.lora2.LoraMixin
-          params:
-            r: 128
-
         patch_embed_config:
           target: dit_mamba_video_concat.ImagePatchEmbeddingMixin
           params:
@@ -90,7 +85,7 @@ model:
           target: dit_mamba_video_concat.FinalLayerMixin
         
         mamba_attn_config:
-          target: dit_mamba_video_concat.MambaAttentionMixin
+          target: dit_mamba_video_concat.MambaAttentionLayerMixin
           params:
             prefix_temporal_length: 1
             # temporal_length: 13

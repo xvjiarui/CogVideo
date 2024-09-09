@@ -1,24 +1,22 @@
 args:
   latent_channels: 16
   mode: inference
-  load: "checkpoints/CogVideoX-2b-sat/transformer"
+  load: "checkpoints/CogVideoX-5b-sat/transformer"
   batch_size: 1
   input_type: txt
   input_file: configs/test.txt
-  # sampling_num_frames: 13  # Must be 13, 11 or 9
-  # sampling_fps: 8
   sampling_num_frames: 37  # Must be 13, 11 or 9
-  sampling_fps: 24
-  fp16: True
+  sampling_fps: 8
+  bf16: True
   output_dir: output/inference
   force_inference: True
 
 model:
-  scale_factor: 1.15258426
+  scale_factor: 0.7 # different from cogvideox_2b_infer.yaml
   disable_first_stage_autocast: true
   log_keys:
     - txt
-
+  
   denoiser_config:
     target: sgm.modules.diffusionmodules.denoiser.DiscreteDenoiser
     params:
@@ -32,7 +30,7 @@ model:
       discretization_config:
         target: sgm.modules.diffusionmodules.discretizer.ZeroSNRDDPMDiscretization
         params:
-          shift_scale: 3.0
+          shift_scale: 1.0 # different from cogvideox_2b_infer.yaml
 
   network_config:
     target: dit_mamba_video_concat.DiffusionTransformer
@@ -44,15 +42,16 @@ model:
       time_compressed_rate: 4
       latent_width: 90
       latent_height: 60
-      num_layers: 30
+      num_layers: 42 # different from cogvideox_2b_infer.yaml
       patch_size: 2
       in_channels: 16
       out_channels: 16
-      hidden_size: 1920
+      hidden_size: 3072 # different from cogvideox_2b_infer.yaml
       adm_in_channels: 256
-      num_attention_heads: 30
+      num_attention_heads: 48 # different from cogvideox_2b_infer.yaml
 
       transformer_args:
+        checkpoint_activations: True
         vocab_size: 1
         max_sequence_length: 64
         layernorm_order: pre
@@ -62,14 +61,15 @@ model:
 
       modules:
         pos_embed_config:
-          target: dit_mamba_video_concat.Basic3DPositionEmbeddingMixin
-          # target: dit_mamba_video_concat.RepeatBasic3DPositionEmbeddingMixin
+          target: dit_mamba_video_concat.Rotary3DPositionEmbeddingMixin # different from cogvideox_2b_infer.yaml
           params:
+            hidden_size_head: 64
             text_length: 226
-            height_interpolation: 1.875
-            width_interpolation: 1.875
-            # init_compressed_num_frames: 13
-            time_interpolation: 2.846
+
+        lora_config: ## Using Lora
+          target: sat.model.finetune.lora2.LoraMixin
+          params:
+            r: 128
 
         patch_embed_config:
           target: dit_mamba_video_concat.ImagePatchEmbeddingMixin
@@ -83,15 +83,15 @@ model:
 
         final_layer_config:
           target: dit_mamba_video_concat.FinalLayerMixin
-        
+
         mamba_attn_config:
-          target: dit_mamba_video_concat.MambaAttentionMixin
+          target: dit_mamba_video_concat.MambaAttentionLayerMixin
           params:
             prefix_temporal_length: 1
             # temporal_length: 13
             temporal_length: 37
             attn_length: 12
-            mamba_hidden_size: 2048
+            mamba_hidden_size: 0
 
   conditioner_config:
     target: sgm.modules.GeneralConditioner
@@ -110,12 +110,12 @@ model:
   # 16, 4: 94s, 180s
   # 32, 8: 85s, OOM
   encoder_temporal_tiling_window: 16
-  decoder_temporal_tiling_window: 4
+  decoder_temporal_tiling_window: 2
   first_stage_config:
     target: vae_modules.autoencoder.VideoAutoencoderInferenceWrapper
     params:
       cp_size: 1
-      ckpt_path: "checkpoints/CogVideoX-2b-sat/vae/3d-vae.pt"
+      ckpt_path: "checkpoints/CogVideoX-5b-sat/vae/3d-vae.pt"
       ignore_keys: [ 'loss' ]
 
       loss_config:
@@ -152,7 +152,7 @@ model:
           attn_resolutions: [ ]
           num_res_blocks: 3
           dropout: 0.0
-          gather_norm: false
+          gather_norm: False
 
   loss_fn_config:
     target: sgm.modules.diffusionmodules.loss.VideoDiffusionLoss
@@ -166,10 +166,11 @@ model:
           discretization_config:
             target: sgm.modules.diffusionmodules.discretizer.ZeroSNRDDPMDiscretization
             params:
-              shift_scale: 3.0
+              shift_scale: 1.0 # different from cogvideox_2b_infer.yaml
 
   sampler_config:
-    target: sgm.modules.diffusionmodules.sampling.VPSDEDPMPP2MSampler
+    # target: sgm.modules.diffusionmodules.sampling.VPSDEDPMPP2MSampler
+    target: sgm.modules.diffusionmodules.sampling.VPODEDPMPP2MSampler
     params:
       num_steps: 50
       verbose: True
@@ -177,7 +178,7 @@ model:
       discretization_config:
         target: sgm.modules.diffusionmodules.discretizer.ZeroSNRDDPMDiscretization
         params:
-          shift_scale: 3.0
+          shift_scale: 1.0 # different from cogvideox_2b_infer.yaml
 
       guider_config:
         target: sgm.modules.diffusionmodules.guiders.DynamicCFG

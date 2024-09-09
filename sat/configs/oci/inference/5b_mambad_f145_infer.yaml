@@ -80,7 +80,7 @@ model:
           target: dit_mamba_video_concat.FinalLayerMixin
 
         mamba_attn_config:
-          target: dit_mamba_video_concat.MambaAttentionMixin
+          target: dit_mamba_video_concat.MambaAttentionLayerMixin
           params:
             prefix_temporal_length: 1
             # temporal_length: 13
