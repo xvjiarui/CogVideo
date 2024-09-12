@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 def main():
     # Set up argument parsing
-    parser = argparse.ArgumentParser(description='Process CSV and video folder.')
+    parser = argparse.ArgumentParser(description='Process video folder.')
     parser.add_argument('video_folder', type=str, help='Input video folder')
     parser.add_argument('output_file', type=str, help='Output JSONL file')
     parser.add_argument('--root', type=str, default='', help='Root folder for the video files')
