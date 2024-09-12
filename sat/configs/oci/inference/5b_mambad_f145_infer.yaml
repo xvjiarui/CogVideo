@@ -65,6 +65,7 @@ model:
           params:
             hidden_size_head: 64
             text_length: 226
+            # theta: 50000
 
         patch_embed_config:
           target: dit_mamba_video_concat.ImagePatchEmbeddingMixin
@@ -82,11 +83,14 @@ model:
         mamba_attn_config:
           target: dit_mamba_video_concat.MambaAttentionLayerMixin
           params:
-            prefix_temporal_length: 1
             # temporal_length: 13
-            temporal_length: 37
+            # temporal_length: 37
+            prefix_temporal_length: 1
             attn_length: 12
+            # prefix_temporal_length: 5
+            # attn_length: 8
             mamba_hidden_size: 0
+            mamba_order: post
 
   conditioner_config:
     target: sgm.modules.GeneralConditioner

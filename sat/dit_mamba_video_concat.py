@@ -259,6 +259,69 @@ class RepeatBasic3DPositionEmbeddingMixin(BaseMixin):
         pos_embed = rearrange(pos_embed, "t n d -> (t n) d")
         self.pos_embedding.data[:, -self.num_patches :].copy_(pos_embed)
 
+class RepeatAttnBasic3DPositionEmbeddingMixin(BaseMixin):
+    def __init__(
+        self,
+        height,
+        width,
+        compressed_num_frames,
+        prefix_temporal_length,
+        attn_length,
+        hidden_size,
+        text_length=0,
+        height_interpolation=1.0,
+        width_interpolation=1.0,
+        time_interpolation=1.0,
+    ):
+        super().__init__()
+        self.height = height
+        self.width = width
+        self.text_length = text_length
+        self.compressed_num_frames = compressed_num_frames
+        self.prefix_temporal_length = prefix_temporal_length
+        self.attn_length = attn_length
+        self.spatial_length = height * width
+        self.num_patches = height * width * compressed_num_frames
+        self.pos_embedding = nn.Parameter(
+            torch.zeros(1, int(text_length + self.num_patches), int(hidden_size)), requires_grad=False
+        )
+        self.height_interpolation = height_interpolation
+        self.width_interpolation = width_interpolation
+        self.time_interpolation = time_interpolation
+
+    def position_embedding_forward(self, position_ids, **kwargs):
+        if kwargs["images"].shape[1] == 1:
+            return self.pos_embedding[:, : self.text_length + self.spatial_length]
+
+        return self.pos_embedding[:, : self.text_length + kwargs["seq_length"]]
+
+    def reinit(self, parent_model=None):
+        del self.transformer.position_embeddings
+        pos_embed = get_3d_sincos_pos_embed(
+            self.pos_embedding.shape[-1],
+            self.height,
+            self.width,
+            self.prefix_temporal_length+self.attn_length,
+            height_interpolation=self.height_interpolation,
+            width_interpolation=self.width_interpolation,
+            time_interpolation=self.time_interpolation,
+        )
+        pos_embed = torch.from_numpy(pos_embed).float()
+        assert (self.compressed_num_frames - self.prefix_temporal_length) % self.attn_length == 0
+        num_attn_steps = (self.compressed_num_frames - self.prefix_temporal_length) // self.attn_length
+        # [T, L, C]
+        output_pos_embed = torch.zeros((self.compressed_num_frames, *pos_embed.shape[1:]), device=pos_embed.device, dtype=pos_embed.dtype)
+        # [T, L, 1]
+        output_overlap_count = torch.zeros_like(output_pos_embed[..., 0:1])
+        for i in range(num_attn_steps):
+            start_idx = i * self.attn_length
+            end_idx = self.prefix_temporal_length + (i + 1) * self.attn_length
+            output_pos_embed[start_idx:end_idx] += pos_embed
+            output_overlap_count[start_idx:end_idx] += 1
+        output_pos_embed = output_pos_embed / output_overlap_count
+        output_pos_embed = rearrange(output_pos_embed, "t n d -> (t n) d")
+        self.pos_embedding.data[:, -self.num_patches :].copy_(output_pos_embed)
+
 
 def broadcat(tensors, dim=-1):
     num_tensors = len(tensors)
@@ -754,7 +817,8 @@ class GatingModule(nn.Module):
         self.gating_alpha = nn.Parameter(torch.zeros(hidden_size))
     
     def forward(self, x):
-        return torch.tanh(self.gating_alpha) * x
+        gating_alpha = torch.tanh(self.gating_alpha)
+        return gating_alpha * x
 
 class MambaAttentionLayerMixin(BaseMixin):
     def __init__(
@@ -762,11 +826,13 @@ class MambaAttentionLayerMixin(BaseMixin):
         num_layers,
         hidden_size,
         num_heads,
+        compressed_num_frames,
         mamba_hidden_size,
-        temporal_length,
         attn_length,
         prefix_temporal_length,
         fused_add_norm=False,
+        mamba_order="post",
+        repeat_attn_steps=0,
     ):
         super().__init__()
         self.num_layers = num_layers
@@ -785,6 +851,7 @@ class MambaAttentionLayerMixin(BaseMixin):
             self.mamba_in_projection_list = nn.ModuleList([nn.Identity() for _ in range(num_layers)])
             self.mamba_out_projection_list = nn.ModuleList([nn.Identity() for _ in range(num_layers)])
 
+        # NOTE: mamba blocks has prenorm, so we don't need to add layernorm before and after the mamba blocks
         self.mamba_scan1_list = nn.ModuleList([create_block(
             d_model=mamba_hidden_size,
             d_intermediate=0,
@@ -803,13 +870,82 @@ class MambaAttentionLayerMixin(BaseMixin):
             ),
             fused_add_norm=fused_add_norm
         ) for _ in range(num_layers)])
-        self.fused_add_norm = fused_add_norm
         self.gating_module_list = nn.ModuleList([GatingModule(hidden_size) for _ in range(num_layers)])
-        self.temporal_length = temporal_length
+        self.temporal_length = compressed_num_frames
         self.prefix_temporal_length = prefix_temporal_length
         self.attn_length = attn_length
+        assert mamba_order in ["pre", "post"], "mamba_order must be pre or post"
+        self.mamba_order = mamba_order
+        self.repeat_attn_steps = repeat_attn_steps
     
+    def _mamba_forward(self, hidden_states, **kwargs):
+        layer_idx = kwargs["layer_id"]
+        text_length = kwargs["text_length"]
+
+        mamba_input = self.mamba_in_projection_list[layer_idx](hidden_states)
+
+        scan1_hidden_states, scan1_residual = self.mamba_scan1_list[layer_idx](mamba_input)
+
+        scan1_flipped_hidden_states = torch.cat([scan1_hidden_states[:, :text_length], torch.flip(scan1_hidden_states[:, text_length:], dims=[1])], dim=1)
+        scan1_flipped_residual = torch.cat([scan1_residual[:, :text_length], torch.flip(scan1_residual[:, text_length:], dims=[1])], dim=1)
+
+        # scan1_flipped_hidden_states+scan1_flipped_residual is input into scan2
+        scan2_hidden_states, scan2_residual = self.mamba_scan2_list[layer_idx](scan1_flipped_hidden_states, scan1_flipped_residual)
+
+        scan2_hidden_states = torch.cat([scan2_hidden_states[:, :text_length], torch.flip(scan2_hidden_states[:, text_length:], dims=[1])], dim=1)
+        scan2_residual = torch.cat([scan2_residual[:, :text_length], torch.flip(scan2_residual[:, text_length:], dims=[1])], dim=1)
+
+        mamba_output = self.mamba_out_projection_list[layer_idx](scan2_hidden_states + scan2_residual)
+        hidden_states = hidden_states + self.gating_module_list[layer_idx](mamba_output)
+
+        return hidden_states
+    
+    def _attention_forward(self, hidden_states, mask, **kwargs):
+        attention_forward_default = HOOKS_DEFAULT["attention_forward"]
+        num_tokens_per_frame = kwargs["seq_length"] // self.temporal_length
+        text_length = kwargs["text_length"]
+        num_attn_steps = (self.temporal_length - self.prefix_temporal_length) // self.attn_length
+        # [B, L, C]
+        output_hidden_states = torch.zeros_like(hidden_states)
+        # [B, L, 1]
+        output_overlap_count = torch.zeros_like(hidden_states[..., 0:1])
+        text_hidden_states = hidden_states[:, :text_length]
+        spatial_latent_hidden_states = hidden_states[:, text_length:]
+
+        for i in range(num_attn_steps - self.repeat_attn_steps):
+            start_idx = i * self.attn_length * num_tokens_per_frame
+            end_idx = (self.prefix_temporal_length + (i + 1) * self.attn_length) * num_tokens_per_frame
+            cur_hidden_states = torch.cat([text_hidden_states, spatial_latent_hidden_states[:, start_idx:end_idx]], dim=1)
+            attn_output = attention_forward_default(self, cur_hidden_states, mask, **kwargs)
+            output_hidden_states[:, :text_length] += attn_output[:, :text_length]
+            output_overlap_count[:, :text_length] += 1
+            output_hidden_states[:, text_length + start_idx:text_length + end_idx] += attn_output[:, text_length:]
+            output_overlap_count[:, text_length + start_idx:text_length + end_idx] += 1
+            last_start_idx = start_idx
+            last_end_idx = end_idx
+        for i in range(num_attn_steps - self.repeat_attn_steps, num_attn_steps):
+            start_idx = i * self.attn_length * num_tokens_per_frame
+            end_idx = (self.prefix_temporal_length + (i + 1) * self.attn_length) * num_tokens_per_frame
+            output_hidden_states[:, text_length + start_idx:text_length + end_idx] += output_hidden_states[:, text_length + last_start_idx:text_length + last_end_idx].clone()
+            output_overlap_count[:, text_length + start_idx:text_length + end_idx] += 1
+        
+        output_hidden_states = output_hidden_states / output_overlap_count
+        return output_hidden_states
+
     def attention_forward(self, hidden_states, mask, **kwargs):
+        if self.mamba_order == "post":
+            attn_output = self._attention_forward(hidden_states, mask, **kwargs)
+            mamba_output = self._mamba_forward(attn_output, **kwargs)
+            return mamba_output
+        elif self.mamba_order == "pre":
+            mamba_output = self._mamba_forward(hidden_states, **kwargs)
+            attn_output = self._attention_forward(mamba_output, mask, **kwargs)
+            return attn_output
+        else:
+            raise ValueError(f"Invalid mamba_order: {self.mamba_order}")
+
+
+    def attention_forward_v1(self, hidden_states, mask, **kwargs):
         layer_idx = kwargs["layer_id"]
         attention_forward_default = HOOKS_DEFAULT["attention_forward"]
 
@@ -1053,7 +1189,15 @@ class DiffusionTransformer(BaseModel):
             self.add_mixin("lora", instantiate_from_config(lora_config, layer_num=self.num_layers), reinit=True)
         
         mamba_attn_config = module_configs["mamba_attn_config"]
-        self.add_mixin("mamba_attn", instantiate_from_config(mamba_attn_config, num_layers=self.num_layers, hidden_size=self.hidden_size, num_heads=self.num_attention_heads), reinit=True)
+        self.add_mixin("mamba_attn", instantiate_from_config(
+            mamba_attn_config, 
+            num_layers=self.num_layers, 
+            hidden_size=self.hidden_size, 
+            num_heads=self.num_attention_heads, 
+            compressed_num_frames=(self.num_frames - 1) // self.time_compressed_rate + 1,
+            ), 
+            reinit=True,
+        )
 
         return
 
