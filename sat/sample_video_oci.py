@@ -122,7 +122,7 @@ def sampling_main(args, model_cls):
         model = model_cls
 
     load_checkpoint(model, args)
-    if args.resume:
+    if args.resume and args.resume != 'auto':
         load_checkpoint(model, args, load_path=args.resume, specific_iteration=args.resume_iter)
     model.eval()
 

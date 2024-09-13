@@ -6,7 +6,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from mamba_ssm.models.mixer_seq_simple import create_block
+from mamba_ssm.models.mixer_seq_simple import create_block, Block as MambaMixerBlock
 
 from sat.model.base_model import BaseModel, non_conflict
 from sat.model.mixins import BaseMixin
@@ -812,13 +812,46 @@ class MambaAttentionMixin(BaseMixin):
         return hidden_states
 
 class GatingModule(nn.Module):
-    def __init__(self, hidden_size):
+    def __init__(self, hidden_size, gating_func="tanh", gating_alpha_init=0.):
         super().__init__()
-        self.gating_alpha = nn.Parameter(torch.zeros(hidden_size))
+        self.gating_alpha = nn.Parameter(torch.ones(hidden_size) * gating_alpha_init)
+        if gating_func == "tanh":
+            self.gating_func = torch.tanh
+        elif gating_func == "none":
+            self.gating_func = lambda x: x
+        else:
+            raise ValueError(f"Invalid gating function: {gating_func}")
     
     def forward(self, x):
-        gating_alpha = torch.tanh(self.gating_alpha)
+        gating_alpha = self.gating_func(self.gating_alpha)
         return gating_alpha * x
+
+class ScanBlock(nn.Module):
+    def __init__(self, block, in_features, out_features, direction="forward"):
+        super().__init__()
+        assert isinstance(block, MambaMixerBlock)
+        self.block = block
+        assert direction in ["forward", "backward"], "direction must be forward or backward"
+        self.direction = direction
+        if in_features != out_features and out_features > 0:
+            self.in_projection = nn.Linear(in_features, out_features)
+            self.out_projection = nn.Linear(out_features, in_features)
+        else:
+            self.in_projection = nn.Identity()
+            self.out_projection = nn.Identity()
+    
+    def forward(self, x, direction_start_idx):
+        x = self.in_projection(x)
+        if self.direction == "forward":
+            x, _ = self.block(x)
+        elif self.direction == "backward":
+            x_flipped = torch.cat([x[:, :direction_start_idx], torch.flip(x[:, direction_start_idx:], dims=[1])], dim=1)
+            x_flipped, _ = self.block(x_flipped)
+            x = torch.cat([x_flipped[:, :direction_start_idx], torch.flip(x_flipped[:, direction_start_idx:], dims=[1])], dim=1)
+        else:
+            raise ValueError(f"Invalid direction: {self.direction}")
+        x = self.out_projection(x)
+        return x
 
 class MambaAttentionLayerMixin(BaseMixin):
     def __init__(
@@ -833,52 +866,84 @@ class MambaAttentionLayerMixin(BaseMixin):
         fused_add_norm=False,
         mamba_order="post",
         repeat_attn_steps=0,
+        mamba_gating_func="tanh",
+        mamba_gating_alpha_init=0.,
+        parallel_scan=False,
     ):
         super().__init__()
         self.num_layers = num_layers
-        # increase hidden size to mamba_hidden_size, make sure d_model * expand / headdim = multiple of 8
-        # https://github.com/state-spaces/mamba/issues/351#issuecomment-2167091940
-        # self.mamba_in_projection = nn.Linear(hidden_size, mamba_hidden_size)
-        # self.mamba_out_projection = nn.Linear(mamba_hidden_size, hidden_size)
         head_dim = hidden_size // num_heads
-        # self.mamba_in_projection = ShareHeadLinear(hidden_size, mamba_hidden_size, num_heads=num_heads)
-        # self.mamba_out_projection = ShareHeadLinear(mamba_hidden_size, hidden_size, num_heads=num_heads)
-        if mamba_hidden_size:
-            self.mamba_in_projection_list = nn.ModuleList([AppendHeadLinear(hidden_size, mamba_hidden_size) for _ in range(num_layers)])
-            self.mamba_out_projection_list = nn.ModuleList([TruncateHeadLinear(mamba_hidden_size, hidden_size) for _ in range(num_layers)])
-        else:
-            mamba_hidden_size = hidden_size
-            self.mamba_in_projection_list = nn.ModuleList([nn.Identity() for _ in range(num_layers)])
-            self.mamba_out_projection_list = nn.ModuleList([nn.Identity() for _ in range(num_layers)])
+
+        # increase hidden size with mamba_expand, make sure d_model * expand / headdim = multiple of 8
+        # https://github.com/state-spaces/mamba/issues/351#issuecomment-2167091940
 
         # NOTE: mamba blocks has prenorm, so we don't need to add layernorm before and after the mamba blocks
-        self.mamba_scan1_list = nn.ModuleList([create_block(
-            d_model=mamba_hidden_size,
-            d_intermediate=0,
-            ssm_cfg=dict(
-                layer="Mamba2",
-                headdim=head_dim,
-            ),
-            fused_add_norm=fused_add_norm
-        ) for _ in range(num_layers)])
-        self.mamba_scan2_list = nn.ModuleList([create_block(
-            d_model=mamba_hidden_size,
-            d_intermediate=0,
-            ssm_cfg=dict(
-                layer="Mamba2",
-                headdim=head_dim,
-            ),
-            fused_add_norm=fused_add_norm
-        ) for _ in range(num_layers)])
-        self.gating_module_list = nn.ModuleList([GatingModule(hidden_size) for _ in range(num_layers)])
+        self.mamba_scan1_list = nn.ModuleList([
+            ScanBlock(
+                create_block(
+                    d_model=mamba_hidden_size if mamba_hidden_size > 0 else hidden_size,
+                    d_intermediate=0,
+                    ssm_cfg=dict(
+                        layer="Mamba2",
+                        headdim=head_dim,
+                    ),
+                    fused_add_norm=fused_add_norm
+                ),
+                in_features=hidden_size,
+                out_features=mamba_hidden_size,
+                direction="forward",
+            ) for _ in range(num_layers)
+        ])
+        self.scan1_gating_list = nn.ModuleList([GatingModule(hidden_size, mamba_gating_func, mamba_gating_alpha_init) for _ in range(num_layers)])
+        self.mamba_scan2_list = nn.ModuleList([
+            ScanBlock(
+                create_block(
+                    d_model=mamba_hidden_size if mamba_hidden_size > 0 else hidden_size,
+                    d_intermediate=0,
+                    ssm_cfg=dict(
+                        layer="Mamba2",
+                        headdim=head_dim,
+                    ),
+                    fused_add_norm=fused_add_norm
+                ),
+                in_features=hidden_size,
+                out_features=mamba_hidden_size,
+                direction="backward"
+            ) for _ in range(num_layers)
+        ])
+        self.scan2_gating_list = nn.ModuleList([GatingModule(hidden_size, mamba_gating_func, mamba_gating_alpha_init) for _ in range(num_layers)])
         self.temporal_length = compressed_num_frames
         self.prefix_temporal_length = prefix_temporal_length
         self.attn_length = attn_length
         assert mamba_order in ["pre", "post"], "mamba_order must be pre or post"
         self.mamba_order = mamba_order
         self.repeat_attn_steps = repeat_attn_steps
-    
+        self.parallel_scan = parallel_scan
+
     def _mamba_forward(self, hidden_states, **kwargs):
+        layer_idx = kwargs["layer_id"]
+        text_length = kwargs["text_length"]
+
+        if self.parallel_scan:
+            # scan1 forward
+            scan1_hidden_states = self.mamba_scan1_list[layer_idx](hidden_states, text_length)
+            # scan2 forward
+            scan2_hidden_states = self.mamba_scan2_list[layer_idx](hidden_states, text_length)
+            
+            # parallel add
+            mamba_output = hidden_states + self.scan1_gating_list[layer_idx](scan1_hidden_states) + self.scan2_gating_list[layer_idx](scan2_hidden_states)
+        else:
+            # scan1 forward
+            scan1_hidden_states = self.mamba_scan1_list[layer_idx](hidden_states, text_length)
+            scan1_output = hidden_states + self.scan1_gating_list[layer_idx](scan1_hidden_states)
+
+            # scan2 forward
+            scan2_hidden_states = self.mamba_scan2_list[layer_idx](scan1_output, text_length)
+            mamba_output = scan1_output + self.scan2_gating_list[layer_idx](scan2_hidden_states)
+
+        return mamba_output
+    
+    def _mamba_forward_v1(self, hidden_states, **kwargs):
         layer_idx = kwargs["layer_id"]
         text_length = kwargs["text_length"]
 

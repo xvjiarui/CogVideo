@@ -14,7 +14,7 @@ def main():
     dic_list = []
     for line in open(args.input_file, 'r'):
         dic = json.loads(line)
-        if dic['num_frames'] > 8000:
+        if dic['num_frames'] > 3000:
             continue
         dic_list.append(dic)
     
@@ -44,6 +44,20 @@ def main():
 
     # Duration histogram
     durations = [dic['duration'] for dic in dic_list]
+
+    # Print histogram data for duration
+    print("\nDuration histogram:")
+    hist, bin_edges = np.histogram(durations, bins=20)
+    for i in range(len(hist)):
+        print(f"Bin {i+1}: {bin_edges[i]:.2f} to {bin_edges[i+1]:.2f}, Count: {hist[i]}")
+
+    print("\nDuration statistics:")
+    print(f"Min: {min(durations):.2f}")
+    print(f"Max: {max(durations):.2f}")
+    print(f"Mean: {np.mean(durations):.2f}")
+    print(f"Median: {np.median(durations):.2f}")
+    print(f"Standard deviation: {np.std(durations):.2f}")
+
     plt.hist(durations, bins=20)
     plt.title('Duration histogram')
     plt.xlabel('Duration')

@@ -200,9 +200,9 @@ def setup_model_untrainable_params_and_optimizer(args, model, config_params=None
 
     # print parameters
     print_rank0('Parameter count:')
-    print_rank0(parameter_count_table(model, trainable_only=False))
+    print_rank0(parameter_count_table(model, trainable_only=False, max_depth=5))
     print_rank0('Trainable parameter count:')
-    print_rank0(parameter_count_table(model, trainable_only=True))
+    print_rank0(parameter_count_table(model, trainable_only=True, max_depth=5))
 
     param_groups = get_optimizer_param_groups(model)
 
