@@ -1,7 +1,8 @@
 import argparse
 import os
 import copy
-from datetime import datetime, timedelta
+from datetime import datetime
+from omegaconf import OmegaConf
 
 import submitit
 import sample_video_oci
@@ -18,7 +19,7 @@ def parse_args():
     parser.add_argument("--tag", default="debug", type=str, help="Tag for the experiment")
     parser.add_argument("--ngpus", default=1, type=int, help="Number of gpus to request on each node")
     parser.add_argument("--nodes", default=1, type=int, help="Number of nodes to request")
-    parser.add_argument("--timeout", default=60, type=int, help="Duration of the job")
+    parser.add_argument("--timeout", default=240, type=int, help="Duration of the job")
     parser.add_argument("--account", "-A", default="nvr_lpr_nvgptvision", type=str, 
                         choices=["nvr_lpr_nvgptvision", "nvr_lpr_dataefficientml", "nvr_nxp_visionconferencing"], help="Slurm account")
 
@@ -69,14 +70,22 @@ def get_latest_iter_num(ckpt_dir):
 
 def main():
     args, remaining = parse_args()
-    # Check if all items in args.config_list are txt files
-    if all(item.endswith('.txt') for item in args.config_list):
-        new_config_list = []
-        for config_file in args.config_list:
-            if os.path.isfile(config_file):
-                with open(config_file, 'r') as f:
-                    new_config_list.extend(line.strip() for line in f if line.strip())
+
+    # Check if "bases" is in any config
+    new_config_list = []
+    new_common_configs = []
+    for config_path in args.config_list:
+        config = OmegaConf.load(config_path)
+        if 'bases' in config:
+            new_config_list.extend(config.bases)
+        if 'common_configs' in config:
+            new_common_configs.extend(config.common_configs)
+
+    if new_config_list:
         args.config_list = new_config_list
+    if new_common_configs:
+        assert not args.common_configs, "common_configs and args.common_configs should not be both set"
+        args.common_configs = new_common_configs
 
     for config in args.config_list:
         config_name = os.path.basename(config).split(".")[0]
