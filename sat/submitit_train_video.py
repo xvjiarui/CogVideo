@@ -89,7 +89,7 @@ def main():
         slurm_partition=partition,
         slurm_signal_delay_s=120,
         slurm_setup=[
-            "export WANDB_API_KEY=18a953cf069a567c46b1e613f940e6eb8f878c3d"
+            f"export WANDB_API_KEY={os.environ['WANDB_API_KEY']}"
         ],
         # slurm_additional_parameters=slurm_additional_parameters,
         **kwargs

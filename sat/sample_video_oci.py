@@ -16,7 +16,7 @@ from sat.model.base_model import get_model
 from sat import mpu
 
 from diffusion_video_oci import SATVideoDiffusionEngine
-from arguments import get_args
+from arguments import get_args, init_distributed_mode
 from torchvision.transforms.functional import center_crop, resize
 from torchvision.transforms import InterpolationMode
 
@@ -115,7 +115,9 @@ def resize_for_rectangle_crop(arr, image_size, reshape_mode="random"):
     return arr
 
 
-def sampling_main(args, model_cls):
+def main(args):
+    init_distributed_mode(args)
+    model_cls = SATVideoDiffusionEngine
     if isinstance(model_cls, type):
         model = get_model(args, model_cls)
     else:
@@ -222,16 +224,11 @@ def sampling_main(args, model_cls):
                 if mpu.get_model_parallel_rank() == 0:
                     save_video_as_grid_and_mp4(samples, save_path, fps=args.sampling_fps)
 
-
-if __name__ == "__main__":
-    if "OMPI_COMM_WORLD_LOCAL_RANK" in os.environ:
-        os.environ["LOCAL_RANK"] = os.environ["OMPI_COMM_WORLD_LOCAL_RANK"]
-        os.environ["WORLD_SIZE"] = os.environ["OMPI_COMM_WORLD_SIZE"]
-        os.environ["RANK"] = os.environ["OMPI_COMM_WORLD_RANK"]
+def parse_args(input_args=None):
     py_parser = argparse.ArgumentParser(add_help=False)
-    known, args_list = py_parser.parse_known_args()
+    known, args_list = py_parser.parse_known_args(input_args)
 
-    args = get_args(args_list)
+    args = get_args(args_list, init_dist=False)
     args = argparse.Namespace(**vars(args), **vars(known))
     del args.deepspeed_config
     args.model_config.first_stage_config.params.cp_size = 1
@@ -239,4 +236,7 @@ if __name__ == "__main__":
     args.model_config.network_config.params.transformer_args.checkpoint_activations = False
     args.model_config.loss_fn_config.params.sigma_sampler_config.params.uniform_sampling = False
 
-    sampling_main(args, model_cls=SATVideoDiffusionEngine)
+    return args
+
+if __name__ == "__main__":
+    main(parse_args())

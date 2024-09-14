@@ -6,7 +6,7 @@ from typing import Dict, Union
 
 import torch
 from omegaconf import ListConfig, OmegaConf
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 from ...modules.diffusionmodules.sampling_utils import (
     get_ancestral_step,
