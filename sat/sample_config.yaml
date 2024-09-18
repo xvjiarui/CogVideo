@@ -4,6 +4,10 @@ bases:
   - configs/oci/sft/5b_mambav2_pre_f145_sft.yaml
   - configs/oci/sft/5b_lora_mambav2_pre_f145_sft.yaml
   - configs/oci/sft/5b_full_mambav2_pre_f145_sft.yaml
+  - configs/oci/sft/5b_lora_mambav2_pre_para_f145_sft.yaml
+  - configs/oci/sft/5b_lora_mambav2_pre_para_iden_f145_sft.yaml
+  - configs/oci/sft/5b_lora_mambav2_f145_sft.yaml
+  - configs/oci/sft/5b_lora_mambav2_pre_lr5x_f145_sft.yaml
 
 common_configs:
   - configs/oci/inference/f145_infer.yaml
