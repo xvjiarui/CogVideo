@@ -249,11 +249,13 @@ pipe.vae.enable_tiling()
 
 我们非常欢迎来自社区的贡献，并积极的贡献开源社区。以下作品已经对CogVideoX进行了适配，欢迎大家使用:
 + [CogVideoX-Fun](https://github.com/aigc-apps/CogVideoX-Fun): CogVideoX-Fun是一个基于CogVideoX结构修改后的的pipeline，支持自由的分辨率，多种启动方式。
++ [CogStudio](https://github.com/pinokiofactory/cogstudio): CogVideo 的 Gradio Web UI单独实现仓库，支持更多功能的 Web UI。
 + [Xorbits Inference](https://github.com/xorbitsai/inference): 性能强大且功能全面的分布式推理框架，轻松一键部署你自己的模型或内置的前沿开源模型。
 + [ComfyUI-CogVideoXWrapper](https://github.com/kijai/ComfyUI-CogVideoXWrapper) 使用ComfyUI框架，将CogVideoX加入到你的工作流中。
 + [VideoSys](https://github.com/NUS-HPC-AI-Lab/VideoSys): VideoSys 提供了易用且高性能的视频生成基础设施，支持完整的管道，并持续集成最新的模型和技术。
 + [AutoDL镜像](https://www.codewithgpu.com/i/THUDM/CogVideo/CogVideoX-5b-demo): 由社区成员提供的一键部署Huggingface
   Space镜像。
++ [室内设计微调模型](https://huggingface.co/collections/bertjiazheng/koolcogvideox-66e4762f53287b7f39f8f3ba) 基于 CogVideoX的微调模型，它专为室内设计而设计
 
 ## 完整项目代码结构
 
