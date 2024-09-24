@@ -31,8 +31,7 @@ deepspeed:
     reduce_bucket_size: 1000000000
     allgather_bucket_size: 1000000000
     load_from_fp32_weights: false
-  # zero_allow_untested_optimizer: true
-  zero_allow_untested_optimizer: false
+  zero_allow_untested_optimizer: true
   bf16:
     enabled: True
   fp16:
@@ -42,12 +41,11 @@ deepspeed:
     hysteresis: 2
     min_loss_scale: 1
   optimizer:
-    # type: sat.ops.FusedEmaAdam
-    type: Adam
+    type: sat.ops.FusedEmaAdam
     params:
       # TODO: check
-      lr: 0.0002
-      # lr: 0.00001
+      # lr: 0.0002
+      lr: 0.00001
       betas: [0.9, 0.95]
       eps: 1e-8
       weight_decay: 1e-4
@@ -59,7 +57,6 @@ deepspeed:
 model:
   scale_factor: 0.7 # different from cogvideox_2b_infer.yaml
   disable_first_stage_autocast: true
-  not_trainable_prefixes: ['all'] ## Using Lora
   log_keys:
     - txt
   
@@ -79,12 +76,11 @@ model:
           shift_scale: 1.0 # different from cogvideox_2b_infer.yaml
 
   network_config:
-    target: dit_mamba_video_concat.DiffusionTransformer
+    target: dit_video_concat.DiffusionTransformer
     params:
       time_embed_dim: 512
       elementwise_affine: True
-      # num_frames: 49
-      num_frames: 145
+      num_frames: 49
       time_compressed_rate: 4
       latent_width: 90
       latent_height: 60
@@ -107,36 +103,23 @@ model:
 
       modules:
         pos_embed_config:
-          target: dit_mamba_video_concat.Rotary3DPositionEmbeddingMixin # different from cogvideox_2b_infer.yaml
+          target: dit_video_concat.Rotary3DPositionEmbeddingMixin # different from cogvideox_2b_infer.yaml
           params:
             hidden_size_head: 64
             text_length: 226
 
         patch_embed_config:
-          target: dit_mamba_video_concat.ImagePatchEmbeddingMixin
+          target: dit_video_concat.ImagePatchEmbeddingMixin
           params:
             text_hidden_size: 4096
 
         adaln_layer_config:
-          target: dit_mamba_video_concat.AdaLNMixin
+          target: dit_video_concat.AdaLNMixin
           params:
             qk_ln: True
 
         final_layer_config:
-          target: dit_mamba_video_concat.FinalLayerMixin
-
-        mamba_attn_config:
-          target: dit_mamba_video_concat.MambaAttentionLayerMixin
-          params:
-            prefix_temporal_length: 1
-            attn_length: 12
-            mamba_hidden_size: 0
-            mamba_order: pre
-
-        lora_config: ## Using Lora
-          target: sat.model.finetune.lora2.LoraMixin
-          params:
-            r: 128
+          target: dit_video_concat.FinalLayerMixin
 
   conditioner_config:
     target: sgm.modules.GeneralConditioner
@@ -214,8 +197,7 @@ model:
               shift_scale: 1.0 # different from cogvideox_2b_infer.yaml
 
   sampler_config:
-    # target: sgm.modules.diffusionmodules.sampling.VPSDEDPMPP2MSampler
-    target: sgm.modules.diffusionmodules.sampling.VPODEDPMPP2MSampler
+    target: sgm.modules.diffusionmodules.sampling.VPSDEDPMPP2MSampler
     params:
       num_steps: 50
       verbose: True

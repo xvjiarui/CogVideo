@@ -3,11 +3,11 @@ args:
   model_parallel_size: 1
   # may need to set to pretrain if resuming from a pretraining checkpoint
   mode: finetune
-  load: "checkpoints/CogVideoX-2b-sat/transformer"
+  load: "checkpoints/CogVideoX-5b-sat/transformer"
   no_load_rng: True
   train_iters: 5000
   eval_iters: 1
-  eval_interval: 1000
+  eval_interval: 10000
   eval_batch_size: 1
   save: output/train
   save_interval: 100
@@ -45,8 +45,9 @@ deepspeed:
     # type: sat.ops.FusedEmaAdam
     type: Adam
     params:
-      lr: 1e-3
-      # lr: 5e-4
+      # TODO: check
+      lr: 0.0002
+      # lr: 0.00001
       betas: [0.9, 0.95]
       eps: 1e-8
       weight_decay: 1e-4
@@ -55,9 +56,8 @@ deepspeed:
     contiguous_memory_optimization: false
   wall_clock_breakdown: false
 
-
 model:
-  scale_factor: 1.15258426
+  scale_factor: 0.7 # different from cogvideox_2b_infer.yaml
   disable_first_stage_autocast: true
   not_trainable_prefixes: ['all'] ## Using Lora
   log_keys:
@@ -76,27 +76,28 @@ model:
       discretization_config:
         target: sgm.modules.diffusionmodules.discretizer.ZeroSNRDDPMDiscretization
         params:
-          shift_scale: 3.0
+          shift_scale: 1.0 # different from cogvideox_2b_infer.yaml
 
   network_config:
-    target: dit_video_concat.DiffusionTransformer
+    target: dit_mamba_video_concat.DiffusionTransformer
     params:
       time_embed_dim: 512
       elementwise_affine: True
-      num_frames: 49
+      # num_frames: 49
+      num_frames: 145
       time_compressed_rate: 4
       latent_width: 90
       latent_height: 60
-      num_layers: 30
+      num_layers: 42 # different from cogvideox_2b_infer.yaml
       patch_size: 2
       in_channels: 16
       out_channels: 16
-      hidden_size: 1920
+      hidden_size: 3072 # different from cogvideox_2b_infer.yaml
       adm_in_channels: 256
-      num_attention_heads: 30
+      num_attention_heads: 48 # different from cogvideox_2b_infer.yaml
 
       transformer_args:
-        checkpoint_activations: True ## using gradient checkpointing
+        checkpoint_activations: True
         vocab_size: 1
         max_sequence_length: 64
         layernorm_order: pre
@@ -106,29 +107,38 @@ model:
 
       modules:
         pos_embed_config:
-          target: dit_video_concat.Basic3DPositionEmbeddingMixin
+          target: dit_mamba_video_concat.Rotary3DPositionEmbeddingMixin # different from cogvideox_2b_infer.yaml
           params:
+            hidden_size_head: 64
             text_length: 226
-            height_interpolation: 1.875
-            width_interpolation: 1.875
+
+        patch_embed_config:
+          target: dit_mamba_video_concat.ImagePatchEmbeddingMixin
+          params:
+            text_hidden_size: 4096
+
+        adaln_layer_config:
+          target: dit_mamba_video_concat.AdaLNMixin
+          params:
+            qk_ln: True
+
+        final_layer_config:
+          target: dit_mamba_video_concat.FinalLayerMixin
+
+        mamba_attn_config:
+          target: dit_mamba_video_concat.MambaAttentionLayerMixin
+          params:
+            prefix_temporal_length: 1
+            attn_length: 12
+            mamba_hidden_size: 0
+            mamba_order: pre
+            parallel_scan: true
+            mamba_gating_func: "none"
 
         lora_config: ## Using Lora
           target: sat.model.finetune.lora2.LoraMixin
           params:
             r: 128
-
-        patch_embed_config:
-          target: dit_video_concat.ImagePatchEmbeddingMixin
-          params:
-            text_hidden_size: 4096
-
-        adaln_layer_config:
-          target: dit_video_concat.AdaLNMixin
-          params:
-            qk_ln: True
-
-        final_layer_config:
-          target: dit_video_concat.FinalLayerMixin
 
   conditioner_config:
     target: sgm.modules.GeneralConditioner
@@ -147,13 +157,12 @@ model:
   # 16, 4: 94s, 180s
   # 32, 8: 85s, OOM
   encoder_temporal_tiling_window: 16
-  decoder_temporal_tiling_window: 4
-
+  decoder_temporal_tiling_window: 2
   first_stage_config:
     target: vae_modules.autoencoder.VideoAutoencoderInferenceWrapper
     params:
       cp_size: 1
-      ckpt_path: "checkpoints/CogVideoX-2b-sat/vae/3d-vae.pt"
+      ckpt_path: "checkpoints/CogVideoX-5b-sat/vae/3d-vae.pt"
       ignore_keys: [ 'loss' ]
 
       loss_config:
@@ -190,7 +199,7 @@ model:
           attn_resolutions: [ ]
           num_res_blocks: 3
           dropout: 0.0
-          gather_norm: false
+          gather_norm: False
 
   loss_fn_config:
     target: sgm.modules.diffusionmodules.loss.VideoDiffusionLoss
@@ -204,7 +213,7 @@ model:
           discretization_config:
             target: sgm.modules.diffusionmodules.discretizer.ZeroSNRDDPMDiscretization
             params:
-              shift_scale: 3.0
+              shift_scale: 1.0 # different from cogvideox_2b_infer.yaml
 
   sampler_config:
     target: sgm.modules.diffusionmodules.sampling.VPSDEDPMPP2MSampler
@@ -215,7 +224,7 @@ model:
       discretization_config:
         target: sgm.modules.diffusionmodules.discretizer.ZeroSNRDDPMDiscretization
         params:
-          shift_scale: 3.0
+          shift_scale: 1.0 # different from cogvideox_2b_infer.yaml
 
       guider_config:
         target: sgm.modules.diffusionmodules.guiders.DynamicCFG

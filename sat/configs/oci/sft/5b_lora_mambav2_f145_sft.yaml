@@ -46,8 +46,8 @@ deepspeed:
     type: Adam
     params:
       # TODO: check
-      lr: 0.0002
-      # lr: 0.00001
+      lr: 1e-3
+      # lr: 5e-4
       betas: [0.9, 0.95]
       eps: 1e-8
       weight_decay: 1e-4
@@ -136,7 +136,7 @@ model:
         lora_config: ## Using Lora
           target: sat.model.finetune.lora2.LoraMixin
           params:
-            r: 128
+            r: 256
 
   conditioner_config:
     target: sgm.modules.GeneralConditioner
@@ -214,8 +214,7 @@ model:
               shift_scale: 1.0 # different from cogvideox_2b_infer.yaml
 
   sampler_config:
-    # target: sgm.modules.diffusionmodules.sampling.VPSDEDPMPP2MSampler
-    target: sgm.modules.diffusionmodules.sampling.VPODEDPMPP2MSampler
+    target: sgm.modules.diffusionmodules.sampling.VPSDEDPMPP2MSampler
     params:
       num_steps: 50
       verbose: True

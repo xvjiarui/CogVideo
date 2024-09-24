@@ -156,6 +156,25 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
     emb = np.concatenate([emb_sin, emb_cos], axis=1)  # (M, D)
     return emb
 
+
+class Basic2DPositionEmbeddingMixin(BaseMixin):
+    def __init__(self, height, width, compressed_num_frames, hidden_size, text_length=0):
+        super().__init__()
+        self.height = height
+        self.width = width
+        self.spatial_length = height * width
+        self.pos_embedding = nn.Parameter(
+            torch.zeros(1, int(text_length + self.spatial_length), int(hidden_size)), requires_grad=False
+        )
+
+    def position_embedding_forward(self, position_ids, **kwargs):
+        return self.pos_embedding
+
+    def reinit(self, parent_model=None):
+        del self.transformer.position_embeddings
+        pos_embed = get_2d_sincos_pos_embed(self.pos_embedding.shape[-1], self.height, self.width)
+        self.pos_embedding.data[:, -self.spatial_length :].copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
+
 class Basic3DPositionEmbeddingMixin(BaseMixin):
     def __init__(
         self,
@@ -360,10 +379,17 @@ class Rotary3DPositionEmbeddingMixin(BaseMixin):
         text_length,
         theta=10000,
         rot_v=False,
+        learnable_pos_embed=False,
+        attn_length=12,
+        prefix_temporal_length=1,
     ):
         super().__init__()
         self.rot_v = rot_v
         self.text_length = text_length
+        self.compressed_num_frames = compressed_num_frames
+        self.prefix_temporal_length = prefix_temporal_length
+        self.attn_length = attn_length
+        self.num_tokens_per_frame = height * width
 
         dim_t = hidden_size_head // 4
         dim_h = hidden_size_head // 8 * 3
@@ -394,6 +420,13 @@ class Rotary3DPositionEmbeddingMixin(BaseMixin):
         self.register_buffer("freqs_sin", freqs_sin, persistent=False)
         self.register_buffer("freqs_cos", freqs_cos, persistent=False)
 
+        self.text_length = text_length
+        if learnable_pos_embed:
+            num_patches = height * width * (attn_length + prefix_temporal_length) + text_length
+            self.pos_embedding = nn.Parameter(torch.zeros(1, num_patches, int(hidden_size)), requires_grad=True)
+        else:
+            self.pos_embedding = None
+
     def rotary(self, t, **kwargs):
         seq_len = t.shape[2]
         freqs_cos = self.freqs_cos[:seq_len].unsqueeze(0).unsqueeze(0)
@@ -402,7 +435,28 @@ class Rotary3DPositionEmbeddingMixin(BaseMixin):
         return t * freqs_cos + rotate_half(t) * freqs_sin
 
     def position_embedding_forward(self, position_ids, **kwargs):
-        return None
+        if self.pos_embedding is not None:
+            if self.compressed_num_frames != (self.prefix_temporal_length + self.attn_length):
+                pos_embed = self.pos_embedding[:, self.text_length:]
+                assert (self.compressed_num_frames - self.prefix_temporal_length) % self.attn_length == 0
+                num_attn_steps = (self.compressed_num_frames - self.prefix_temporal_length) // self.attn_length
+                # [1, L, C]
+                output_pos_embed = torch.zeros((1, self.num_tokens_per_frame * self.compressed_num_frames, pos_embed.shape[-1]), device=pos_embed.device, dtype=pos_embed.dtype)
+                # [T, L, 1]
+                output_overlap_count = torch.zeros_like(output_pos_embed[..., 0:1])
+                for i in range(num_attn_steps):
+                    start_idx = i * self.attn_length * self.num_tokens_per_frame
+                    end_idx = (self.prefix_temporal_length + (i + 1) * self.attn_length) * self.num_tokens_per_frame
+                    output_pos_embed[:, start_idx:end_idx] += pos_embed
+                    output_overlap_count[:, start_idx:end_idx] += 1
+                output_pos_embed = output_pos_embed / output_overlap_count
+                output_pos_embed = torch.cat([self.pos_embedding[:, :self.text_length], output_pos_embed], dim=1)
+            else:
+                output_pos_embed = self.pos_embedding
+
+            return output_pos_embed[:, :self.text_length + kwargs["seq_length"]]
+        else:
+            return None
 
     def attention_fn(
         self,
@@ -1276,6 +1330,15 @@ class DiffusionTransformer(BaseModel):
         b, t, d, h, w = x.shape
         if x.dtype != self.dtype:
             x = x.to(self.dtype)
+
+        # This is not use in inference
+        if "concat_images" in kwargs and kwargs["concat_images"] is not None:
+            if kwargs["concat_images"].shape[0] != x.shape[0]:
+                concat_images = kwargs["concat_images"].repeat(2, 1, 1, 1, 1)
+            else:
+                concat_images = kwargs["concat_images"]
+            x = torch.cat([x, concat_images], dim=2)
+
         assert (y is not None) == (
             self.num_classes is not None
         ), "must specify y if and only if the model is class-conditional"

@@ -3,11 +3,11 @@ args:
   model_parallel_size: 1
   # may need to set to pretrain if resuming from a pretraining checkpoint
   mode: finetune
-  load: "checkpoints/CogVideoX-2b-sat/transformer"
+  load: "checkpoints/CogVideoX-5b-i2v-sat/transformer"
   no_load_rng: True
   train_iters: 5000
   eval_iters: 1
-  eval_interval: 1000
+  eval_interval: 10000
   eval_batch_size: 1
   save: output/train
   save_interval: 100
@@ -55,14 +55,16 @@ deepspeed:
     contiguous_memory_optimization: false
   wall_clock_breakdown: false
 
-
 model:
-  scale_factor: 1.15258426
+  scale_factor: 0.7
   disable_first_stage_autocast: true
+  latent_input: false
+  noised_image_input: true
+  noised_image_dropout: 0.05
   not_trainable_prefixes: ['all'] ## Using Lora
   log_keys:
     - txt
-  
+
   denoiser_config:
     target: sgm.modules.diffusionmodules.denoiser.DiscreteDenoiser
     params:
@@ -76,7 +78,7 @@ model:
       discretization_config:
         target: sgm.modules.diffusionmodules.discretizer.ZeroSNRDDPMDiscretization
         params:
-          shift_scale: 3.0
+          shift_scale: 1.0 # different from cogvideox_2b_infer.yaml
 
   network_config:
     target: dit_video_concat.DiffusionTransformer
@@ -87,16 +89,16 @@ model:
       time_compressed_rate: 4
       latent_width: 90
       latent_height: 60
-      num_layers: 30
+      num_layers: 42
       patch_size: 2
-      in_channels: 16
+      in_channels: 32
       out_channels: 16
-      hidden_size: 1920
+      hidden_size: 3072
       adm_in_channels: 256
-      num_attention_heads: 30
+      num_attention_heads: 48
 
       transformer_args:
-        checkpoint_activations: True ## using gradient checkpointing
+        checkpoint_activations: True
         vocab_size: 1
         max_sequence_length: 64
         layernorm_order: pre
@@ -106,16 +108,16 @@ model:
 
       modules:
         pos_embed_config:
-          target: dit_video_concat.Basic3DPositionEmbeddingMixin
+          target: dit_video_concat.Rotary3DPositionEmbeddingMixin
           params:
+            learnable_pos_embed: True
+            hidden_size_head: 64
             text_length: 226
-            height_interpolation: 1.875
-            width_interpolation: 1.875
 
-        lora_config: ## Using Lora
+        lora_config:
           target: sat.model.finetune.lora2.LoraMixin
           params:
-            r: 128
+            r: 256
 
         patch_embed_config:
           target: dit_video_concat.ImagePatchEmbeddingMixin
@@ -147,13 +149,12 @@ model:
   # 16, 4: 94s, 180s
   # 32, 8: 85s, OOM
   encoder_temporal_tiling_window: 16
-  decoder_temporal_tiling_window: 4
-
+  decoder_temporal_tiling_window: 2
   first_stage_config:
     target: vae_modules.autoencoder.VideoAutoencoderInferenceWrapper
     params:
       cp_size: 1
-      ckpt_path: "checkpoints/CogVideoX-2b-sat/vae/3d-vae.pt"
+      ckpt_path: "checkpoints/CogVideoX-5b-i2v-sat/vae/3d-vae.pt"
       ignore_keys: [ 'loss' ]
 
       loss_config:
@@ -190,11 +191,12 @@ model:
           attn_resolutions: [ ]
           num_res_blocks: 3
           dropout: 0.0
-          gather_norm: false
+          gather_norm: True
 
   loss_fn_config:
     target: sgm.modules.diffusionmodules.loss.VideoDiffusionLoss
     params:
+      fixed_frames: 0
       offset_noise_level: 0
       sigma_sampler_config:
         target: sgm.modules.diffusionmodules.sigma_sampling.DiscreteSampling
@@ -204,18 +206,19 @@ model:
           discretization_config:
             target: sgm.modules.diffusionmodules.discretizer.ZeroSNRDDPMDiscretization
             params:
-              shift_scale: 3.0
+              shift_scale: 1.0
 
   sampler_config:
     target: sgm.modules.diffusionmodules.sampling.VPSDEDPMPP2MSampler
     params:
+      fixed_frames: 0
       num_steps: 50
       verbose: True
 
       discretization_config:
         target: sgm.modules.diffusionmodules.discretizer.ZeroSNRDDPMDiscretization
         params:
-          shift_scale: 3.0
+          shift_scale: 1.0
 
       guider_config:
         target: sgm.modules.diffusionmodules.guiders.DynamicCFG

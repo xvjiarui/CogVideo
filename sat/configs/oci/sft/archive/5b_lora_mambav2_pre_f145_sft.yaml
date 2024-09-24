@@ -46,7 +46,7 @@ deepspeed:
     type: Adam
     params:
       # TODO: check
-      lr: 0.00005
+      lr: 0.0002
       # lr: 0.00001
       betas: [0.9, 0.95]
       eps: 1e-8
@@ -214,8 +214,7 @@ model:
               shift_scale: 1.0 # different from cogvideox_2b_infer.yaml
 
   sampler_config:
-    # target: sgm.modules.diffusionmodules.sampling.VPSDEDPMPP2MSampler
-    target: sgm.modules.diffusionmodules.sampling.VPODEDPMPP2MSampler
+    target: sgm.modules.diffusionmodules.sampling.VPSDEDPMPP2MSampler
     params:
       num_steps: 50
       verbose: True
