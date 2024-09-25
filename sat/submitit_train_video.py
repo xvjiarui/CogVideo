@@ -4,11 +4,12 @@ import copy
 from datetime import datetime, timedelta
 
 import submitit
+import torch
 import train_video_oci
 # from torch.distributed.run import main as torchrun
 
 
-def parse_args():
+def parse_args(input_args=None):
     parser = argparse.ArgumentParser("Submitit for CogVideo training")
     parser.add_argument("--ngpus", default=8, type=int, help="Number of gpus to request on each node")
     parser.add_argument("--nodes", default=2, type=int, help="Number of nodes to request")
@@ -21,10 +22,8 @@ def parse_args():
     parser.add_argument("--nodelist", default=None, type=str, help='specify node list')
     parser.add_argument('--comment', default="", type=str,
                         help='Comment to pass to scheduler, e.g. priority message')
-    # return parser.parse_args()
-    args, remaining = parser.parse_known_args()
-    train_args = train_video_oci.parse_args(remaining)
-    return args, train_args
+    args, remaining = parser.parse_known_args(input_args)
+    return args, remaining
 
 
 class Trainer(object):
@@ -33,11 +32,17 @@ class Trainer(object):
 
     def __call__(self):
         import train_video_oci
+        import os
+        import signal
 
         self._setup_gpu_args()
         # NOTE(xvjiarui): deepcopy is necessary to avoid the args being changed in the main function
         args = copy.deepcopy(self.args)
-        train_video_oci.main(args)
+        try:
+            train_video_oci.main(args)
+        except torch.distributed.DistStoreError as e:
+            print(f"Caught exception {e}, sending SIGUSR2 to self to trigger checkpointing")
+            os.kill(os.getpid(), signal.SIGUSR2)
 
     def checkpoint(self):
         import submitit
@@ -55,9 +60,10 @@ class Trainer(object):
         print(f"local rank: {dist_env.local_rank}")
         print(f"local world size: {dist_env.local_world_size}")
 
-def main():
-    args, train_args = parse_args()
-
+def main(input_args=None):
+    args, remaining = parse_args(input_args)
+    print(f'train_video_oci: {remaining}')
+    train_args = train_video_oci.parse_args(remaining)
 
     num_gpus_per_node = args.ngpus
     nodes = args.nodes

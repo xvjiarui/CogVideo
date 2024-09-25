@@ -9,10 +9,10 @@ import sample_video_oci
 # from torch.distributed.run import main as torchrun
 
 
-def parse_args():
+def parse_args(input_args=None):
     parser = argparse.ArgumentParser("Submitit for CogVideo training")
-    parser.add_argument("--config-list", nargs="+", help="Configs to sample")
-    parser.add_argument("--common-configs", nargs="+", help="Common configs for all the configs")
+    parser.add_argument("--config", type=str, help="Path to the config file")
+    parser.add_argument("--extra-configs", nargs="+", help="Extra configs to add to the base config")
     parser.add_argument("--suffix", default="checkpoints", type=str, help="Suffix for the checkpoint folder")
     parser.add_argument("--train-output-dir", default="output/train", type=str, help="Output directory for the training")
     parser.add_argument("--sample-output-dir", default="output/sample", type=str, help="Output directory for the sampling")
@@ -28,7 +28,7 @@ def parse_args():
     parser.add_argument('--comment', default="", type=str,
                         help='Comment to pass to scheduler, e.g. priority message')
     # return parser.parse_args()
-    args, remaining = parser.parse_known_args()
+    args, remaining = parser.parse_known_args(input_args)
     return args, remaining
 
 
@@ -68,81 +68,67 @@ def get_latest_iter_num(ckpt_dir):
         return iter_num
     
 
-def main():
-    args, remaining = parse_args()
+def main(input_args=None):
+    args, remaining = parse_args(input_args)
+    config = args.config
+    config_name = os.path.basename(config).split(".")[0]
 
-    # Check if "bases" is in any config
-    new_config_list = []
-    new_common_configs = []
-    for config_path in args.config_list:
-        config = OmegaConf.load(config_path)
-        if 'bases' in config:
-            new_config_list.extend(config.bases)
-        if 'common_configs' in config:
-            new_common_configs.extend(config.common_configs)
+    experiment_name = f"sample:{config_name}"
+    ckpt_dir = os.path.join(args.train_output_dir, f"{config_name}_{args.suffix}")
 
-    if new_config_list:
-        args.config_list = new_config_list
-    if new_common_configs:
-        assert not args.common_configs, "common_configs and args.common_configs should not be both set"
-        args.common_configs = new_common_configs
+    resume_iter = get_latest_iter_num(ckpt_dir)
+    assert resume_iter > 0, f"No checkpoint found in {ckpt_dir}"
+    print(f"Sampling from checkpoint {ckpt_dir} at iteration {resume_iter}")
 
-    for config in args.config_list:
-        config_name = os.path.basename(config).split(".")[0]
-        experiment_name = f"sample:{config_name}"
-        ckpt_dir = os.path.join(args.train_output_dir, f"{config_name}_{args.suffix}")
+    sample_dir = os.path.join(args.sample_output_dir, f"{config_name}_{args.suffix}", args.tag, f"iter_{resume_iter}")
 
-        resume_iter = get_latest_iter_num(ckpt_dir)
-        assert resume_iter > 0, f"No checkpoint found in {ckpt_dir}"
-        print(f"Sampling from checkpoint {ckpt_dir} at iteration {resume_iter}")
+    remaining = [
+        '--base', config, *args.extra_configs,
+        '--resume', ckpt_dir,
+        '--resume-iter', str(resume_iter),
+        '--output-dir', sample_dir
+    ] + remaining
+    print(f'sample_video_oci: {remaining}')
+    sample_args = sample_video_oci.parse_args(remaining)
 
-        sample_dir = os.path.join(args.sample_output_dir, f"{config_name}_{args.suffix}", args.tag, f"iter_{resume_iter}")
+    num_gpus_per_node = args.ngpus
+    nodes = args.nodes
+    timeout_min = args.timeout
 
-        cur_remaining = [
-            '--base', config, *args.common_configs,
-            '--resume', ckpt_dir,
-            '--output-dir', sample_dir
-        ] + remaining
-        sample_args = sample_video_oci.parse_args(cur_remaining)
+    partition = args.partition
+    kwargs = {}
+    if args.comment:
+        kwargs['slurm_comment'] = args.comment
 
-        num_gpus_per_node = args.ngpus
-        nodes = args.nodes
-        timeout_min = args.timeout
+    output_dir = sample_args.output_dir
+    # Note that the folder will depend on the job_id, to easily track experiments
+    executor = submitit.AutoExecutor(folder=os.path.join(output_dir, "submitit_logs", f"%j-{datetime.now().strftime('%Y%m%d-%H%M%S')}"), slurm_max_num_timeout=30)
 
-        partition = args.partition
-        kwargs = {}
-        if args.comment:
-            kwargs['slurm_comment'] = args.comment
+    executor.update_parameters(
+        mem_gb=128 * num_gpus_per_node,
+        gpus_per_node=num_gpus_per_node,
+        tasks_per_node=num_gpus_per_node,  # one task per GPU
+        cpus_per_task=31,
+        nodes=nodes,
+        timeout_min=timeout_min,  # max is 60 * 24 * 7
+        # Below are cluster dependent parameters
+        slurm_account=args.account,
+        slurm_partition=partition,
+        slurm_signal_delay_s=120,
+        slurm_setup=[
+            f"export WANDB_API_KEY={os.environ['WANDB_API_KEY']}"
+        ],
+        # slurm_additional_parameters=slurm_additional_parameters,
+        **kwargs
+    )
 
-        output_dir = sample_args.output_dir
-        # Note that the folder will depend on the job_id, to easily track experiments
-        executor = submitit.AutoExecutor(folder=os.path.join(output_dir, "submitit_logs", f"%j-{datetime.now().strftime('%Y%m%d-%H%M%S')}"), slurm_max_num_timeout=30)
-
-        executor.update_parameters(
-            mem_gb=128 * num_gpus_per_node,
-            gpus_per_node=num_gpus_per_node,
-            tasks_per_node=num_gpus_per_node,  # one task per GPU
-            cpus_per_task=31,
-            nodes=nodes,
-            timeout_min=timeout_min,  # max is 60 * 24 * 7
-            # Below are cluster dependent parameters
-            slurm_account=args.account,
-            slurm_partition=partition,
-            slurm_signal_delay_s=120,
-            slurm_setup=[
-                f"export WANDB_API_KEY={os.environ['WANDB_API_KEY']}"
-            ],
-            # slurm_additional_parameters=slurm_additional_parameters,
-            **kwargs
-        )
-
-        executor.update_parameters(name=experiment_name)
+    executor.update_parameters(name=experiment_name)
 
 
-        trainer = Trainer(sample_args)
-        job = executor.submit(trainer)
+    trainer = Trainer(sample_args)
+    job = executor.submit(trainer)
 
-        print("Submitted job_id:", job.job_id)
+    print("Submitted job_id:", job.job_id)
 
 
 if __name__ == "__main__":

@@ -12,8 +12,12 @@ test*
 sat/checkpoints/
 data/
 sat/data/
+sat/data
 sat/output
 sat/checkpoints
 debug/
 resources/videos
 *.code-workspace
+
+submitit_batch_train_video_config.yaml
+submitit_batch_sample_video_config.yaml

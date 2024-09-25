@@ -22,6 +22,8 @@ from torchvision.transforms.functional import center_crop, resize
 from torchvision.transforms import InterpolationMode
 
 from training.model_io import load_checkpoint
+# import decord too early will cause segfault, don't know why
+import decord
 
 
 def read_from_cli():
@@ -158,7 +160,14 @@ def main(args):
             if args.image2video:
                 text, image_path = text.split("@@")
                 assert os.path.exists(image_path), image_path
-                image = Image.open(image_path).convert("RGB")
+                if os.path.splitext(image_path)[1].lower() in ['.mp4', '.avi', '.mov']:
+                    # If it's a video file, read the first frame
+                    vr = decord.VideoReader(image_path)
+                    image = vr[0].asnumpy()
+                    image = Image.fromarray(image)
+                else:
+                    # If it's an image file, proceed as before
+                    image = Image.open(image_path).convert("RGB")
                 image = transform(image).unsqueeze(0).to("cuda")
                 image = resize_for_rectangle_crop(image, image_size, reshape_mode="center").unsqueeze(0)
                 image = image * 2.0 - 1.0
