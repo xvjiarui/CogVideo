@@ -118,6 +118,7 @@ def main(input_args=None):
         slurm_setup=[
             f"export WANDB_API_KEY={os.environ['WANDB_API_KEY']}"
         ],
+        stderr_to_stdout=True,
         # slurm_additional_parameters=slurm_additional_parameters,
         **kwargs
     )

@@ -87,6 +87,8 @@ def add_training_args(parser):
                        help='Output directory to save checkpoints to.')
     group.add_argument('--load', type=str, default=None,
                        help='Path to a directory containing a model checkpoint.')
+    group.add_argument('--load-extra', type=str, default=None,
+                       help='Path to a directory containing extra model checkpoint.')
     group.add_argument('--resume', type=str, default=None,
                        help='Path to resume model training.')
     group.add_argument('--force-train', action='store_true',

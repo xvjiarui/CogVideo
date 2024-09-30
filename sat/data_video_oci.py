@@ -181,7 +181,6 @@ class SftJsonlDatasetV2(Dataset):
         max_num_frames,
         skip_frms_num=3,
         text_key="text",
-        frame_idx_key="frame_idx",
         sub_text_key="cap",
         filter_metadata=True,
         ):
@@ -193,7 +192,8 @@ class SftJsonlDatasetV2(Dataset):
         self.metadata_list = []
         if isinstance(jsonl_paths, str):
             jsonl_paths = [jsonl_paths]
-        skipped_videos = 0
+        short_videos = 0
+        long_videos = 0
         for jsonl_path in jsonl_paths:
             with open(jsonl_path, "r") as f:
                 for line in f:
@@ -202,21 +202,21 @@ class SftJsonlDatasetV2(Dataset):
                     num_frames = metadata["num_frames"]
                     actual_fps = num_frames / duration
                     required_duration = max_num_frames / fps + 2 * skip_frms_num / actual_fps
-                    if filter_metadata and duration < required_duration:
-                        # print(f"Skipping video {metadata['path']} because its duration is too short, {duration} < {required_duration}")
-                        skipped_videos += 1
-                        continue
-
-                    # skip too long videos
+                    if duration < required_duration:
+                        short_videos += 1
+                        if filter_metadata:
+                            continue
                     if num_frames > 8000:
-                        skipped_videos += 1
-                        continue
+                        long_videos += 1
+                        if filter_metadata:
+                            continue
 
                     self.metadata_list.append(metadata)
 
         print('filter_metadata:', filter_metadata)
-        print(f"Skipped {skipped_videos} videos")
-        print(f"Loaded {len(self.metadata_list)} videos")
+        print(f"{'Skipped' if filter_metadata else 'Loaded'} {short_videos} short videos")
+        print(f"{'Skipped' if filter_metadata else 'Loaded'} {long_videos} long videos")
+        print(f'Loaded {len(self.metadata_list)} videos')
         decord.bridge.set_bridge("torch")
         self.video_size = video_size
         self.fps = fps
@@ -224,11 +224,15 @@ class SftJsonlDatasetV2(Dataset):
         self.skip_frms_num = skip_frms_num
         self.text_key = text_key
         self.sub_text_key = sub_text_key
-
+        self.filter_metadata = filter_metadata
+        
     def __getitem__(self, index):
         for i in range(10):
             try:
-                return self.load_video_by_index_after_filter(index)
+                if self.filter_metadata:
+                    return self.load_video_by_index_after_filter(index)
+                else:
+                    return self.load_video_by_index(index)
             except (TimeoutError, RuntimeError) as e:
                 print(f"Error loading video {index}, retrying")
                 print(e)
@@ -271,7 +275,6 @@ class SftJsonlDatasetV2(Dataset):
         return item
 
     def load_video_by_index(self, index):
-        # TODO(xvjiarui): the starting point of the video is not random, maybe we can randomize it
         # decord.bridge.set_bridge("torch")
 
         metadata = self.metadata_list[index]
@@ -283,7 +286,8 @@ class SftJsonlDatasetV2(Dataset):
 
         if ori_vlen / actual_fps * self.fps > self.max_num_frames:
             num_frames = self.max_num_frames
-            start = int(self.skip_frms_num)
+            max_seek = int(ori_vlen - self.skip_frms_num - num_frames / self.fps * actual_fps)
+            start = random.randint(self.skip_frms_num, max_seek + 1)
             end = int(start + num_frames / self.fps * actual_fps)
             end_safty = min(int(start + num_frames / self.fps * actual_fps), int(ori_vlen))
             indices = np.arange(start, end, (end - start) // num_frames).astype(int)
@@ -296,7 +300,7 @@ class SftJsonlDatasetV2(Dataset):
                 num_frames = self.max_num_frames
                 start = int(self.skip_frms_num)
                 end = int(ori_vlen - self.skip_frms_num)
-                indices = np.arange(start, end, (end - start) // num_frames).astype(int)
+                indices = np.arange(start, end, max((end - start) // num_frames, 1)).astype(int)
                 temp_frms = vr.get_batch(np.arange(start, end))
                 assert temp_frms is not None
                 tensor_frms = (

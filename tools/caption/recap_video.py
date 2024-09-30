@@ -1,30 +1,16 @@
 """
-python tools/tandj_hf/recap_video.py data/tandj_hf/videos data/tandj_hf/metadata/default_stats.jsonl data/tandj_hf/metadata/default_recap.jsonl
+python tools/caption/recap_video.py data/tandj_hf/videos data/tandj_hf/metadata/default_stats.jsonl data/tandj_hf/metadata/default_recap.jsonl
 """
 import argparse
 import json
 import os
-import subprocess
+import socket
 from tqdm import tqdm
 import requests
 from concurrent.futures import ThreadPoolExecutor
 from threading import Semaphore
 
-# URLS = [f'http://127.0.0.1:{port}/video_qa' for port in range(5000, 5008)]
-URLS = []
-URLS += [f'http://10.49.166.18:{port}/video_qa' for port in range(5000, 5008)]
-URLS += [f'http://10.49.164.3:{port}/video_qa' for port in range(5000, 5008)]
-URLS += [f'http://10.49.161.140:{port}/video_qa' for port in range(5000, 5008)]
-URLS += [f'http://10.49.165.112:{port}/video_qa' for port in range(5000, 5008)]
-URLS += [f'http://10.49.162.145:{port}/video_qa' for port in range(5000, 5008)]
-URLS += [f'http://10.49.165.215:{port}/video_qa' for port in range(5000, 5008)]
-print(URLS)
-
-# Create a semaphore with a maximum number of concurrent requests
-# Create a dictionary of semaphores, one for each URL
-semaphores = {url: Semaphore(1) for url in URLS}
-
-def get_prediction_with_semaphore(dic, video_folder, url):
+def get_prediction_with_semaphore(dic, video_folder, url, semaphores):
     with semaphores[url]:
         return get_prediction(dic, video_folder, url)
 
@@ -68,8 +54,8 @@ def get_prediction(dic, video_folder, url):
 
     return dic
 
-def get_url(index):
-    return URLS[index % len(URLS)]
+def get_url(index, server_urls):
+    return server_urls[index % len(server_urls)]
 
 def main():
     # Set up argument parsing
@@ -79,13 +65,28 @@ def main():
     parser.add_argument('output_file', type=str, help='Output JOSNL file')
     args = parser.parse_args()
 
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(script_dir, 'recap_hosts.txt'), 'r') as file:
+        nodes = file.readlines()
+    nodes = [node.strip() for node in nodes]
+    print(nodes)
+    server_urls = []
+    for node in nodes:
+        ip = socket.gethostbyname(node)
+        server_urls.extend([f'http://{ip}:{port}/video_qa' for port in range(5000, 5008)])
+    print(server_urls)
+    # Create a semaphore with a maximum number of concurrent requests
+    # Create a dictionary of semaphores, one for each URL
+    semaphores = {url: Semaphore(1) for url in server_urls}
+
+
     dic_list = []
     for line in open(args.input_file, 'r'):
         dic_list.append(json.loads(line))
 
-    with ThreadPoolExecutor(max_workers=len(URLS)) as executor:
+    with ThreadPoolExecutor(max_workers=len(server_urls)) as executor:
         # futures = [executor.submit(get_prediction, dic, args.video_folder, get_url(idx)) for idx, dic in enumerate(dic_list)]
-        futures = [executor.submit(get_prediction_with_semaphore, dic, args.video_folder, get_url(idx)) for idx, dic in enumerate(dic_list)]
+        futures = [executor.submit(get_prediction_with_semaphore, dic, args.video_folder, get_url(idx, server_urls), semaphores) for idx, dic in enumerate(dic_list)]
         with open(args.output_file, 'w') as out_file:
             for future in tqdm(futures, desc="Processing videos"):
                 dic = future.result()

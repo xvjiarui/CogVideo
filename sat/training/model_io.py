@@ -331,6 +331,14 @@ def load_checkpoint(model, args, load_path=None, prefix='', specific_iteration=N
         if k.startswith(prefix):
             new_sd['module'][k[len(prefix):]] = sd['module'][k]
     sd = new_sd
+
+    if args.load_extra is not None:
+        extra_iteration, extra_release, extra_success = get_checkpoint_iteration(args.load_extra)
+        assert extra_success, 'Failed to get checkpoint iteration for extra checkpoint'
+        extra_ckpt_name = get_checkpoint_name(args.load_extra, extra_iteration, extra_release)
+        print_rank0(f'Loading extra checkpoint from {extra_ckpt_name}')
+        extra_sd = torch.load(extra_ckpt_name, map_location='cpu')
+        sd['module'].update(extra_sd['module'])
     
     if hasattr(model, 'module'):
         module = model.module

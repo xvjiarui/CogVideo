@@ -38,11 +38,12 @@ class Trainer(object):
         self._setup_gpu_args()
         # NOTE(xvjiarui): deepcopy is necessary to avoid the args being changed in the main function
         args = copy.deepcopy(self.args)
-        try:
-            train_video_oci.main(args)
-        except torch.distributed.DistStoreError as e:
-            print(f"Caught exception {e}, sending SIGUSR2 to self to trigger checkpointing")
-            os.kill(os.getpid(), signal.SIGUSR2)
+        train_video_oci.main(args)
+        # try:
+        #     train_video_oci.main(args)
+        # except torch.distributed.DistStoreError as e:
+        #     print(f"Caught exception {e}, sending SIGUSR2 to self to trigger checkpointing")
+        #     os.kill(os.getpid(), signal.SIGUSR2)
 
     def checkpoint(self):
         import submitit
@@ -97,6 +98,7 @@ def main(input_args=None):
         slurm_setup=[
             f"export WANDB_API_KEY={os.environ['WANDB_API_KEY']}"
         ],
+        stderr_to_stdout=True,
         # slurm_additional_parameters=slurm_additional_parameters,
         **kwargs
     )
