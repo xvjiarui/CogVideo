@@ -267,10 +267,15 @@ class FrozenT5Embedder(AbstractEmbModel):
             truncation=True,
             max_length=self.max_length,
             return_length=True,
-            return_overflowing_tokens=False,
+            return_overflowing_tokens=True,
             padding="max_length",
             return_tensors="pt",
         )
+        # Check if truncation occurred
+        num_truncated_tokens = batch_encoding.get('num_truncated_tokens', 0)
+        if num_truncated_tokens > 0:
+            print(f"Tokenization truncated {num_truncated_tokens} tokens.")
+
         tokens = batch_encoding["input_ids"].to(self.device)
         with torch.autocast("cuda", enabled=False):
             outputs = self.transformer(input_ids=tokens)

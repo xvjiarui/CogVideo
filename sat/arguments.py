@@ -125,6 +125,12 @@ def add_model_config_args(parser):
     group = parser.add_argument_group("model", "model configuration")
     group.add_argument("--base", type=str, nargs="*", help="config for input and saving")
     group.add_argument(
+        "--opts",
+        help="Modify config options at the end of the command. use 'path.key=value'",
+        default=None,
+        nargs="*",
+    )
+    group.add_argument(
         "--model-parallel-size", type=int, default=1, help="size of the model parallel. only use if you are an expert."
     )
     group.add_argument("--force-pretrain", action="store_true")
@@ -377,6 +383,9 @@ def process_config_to_args(args):
 
     configs = [OmegaConf.load(cfg) for cfg in args.base]
     config = OmegaConf.merge(*configs)
+    if args.opts:
+        update_conf = OmegaConf.from_dotlist(args.opts)
+        config = OmegaConf.merge(config, update_conf)
 
     args_config = config.pop("args", OmegaConf.create())
     for key in args_config:

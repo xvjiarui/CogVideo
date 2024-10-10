@@ -200,6 +200,8 @@ def main(args):
                 batch_uc=batch_uc,
                 force_uc_zero_embeddings=force_uc_zero_embeddings,
             )
+            for k, v in c.items():
+                print(k, v.shape)
 
             for k in c:
                 if not k == "crossattn":
@@ -210,6 +212,13 @@ def main(args):
                 uc["concat"] = image
 
             for index in range(args.batch_size):
+                save_path = os.path.join(
+                    args.output_dir, str(cnt) + "_" + text.replace(" ", "_").replace("/", "")[:120], str(index)
+                )
+                if os.path.exists(os.path.join(save_path, "000000.mp4")):
+                    print(f"Video already exists: {save_path}")
+                    continue
+
                 # reload model on GPU
                 model.to(device)
                 samples_z = sample_func(
@@ -252,9 +261,6 @@ def main(args):
                 samples_x = recon.permute(0, 2, 1, 3, 4).contiguous()
                 samples = torch.clamp((samples_x + 1.0) / 2.0, min=0.0, max=1.0).cpu()
 
-                save_path = os.path.join(
-                    args.output_dir, str(cnt) + "_" + text.replace(" ", "_").replace("/", "")[:120], str(index)
-                )
                 if mpu.get_model_parallel_rank() == 0:
                     save_video_as_grid_and_mp4(samples, save_path, fps=args.sampling_fps)
 

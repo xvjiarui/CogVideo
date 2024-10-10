@@ -1,19 +1,64 @@
 args:
-  latent_channels: 16
-  mode: inference
+  checkpoint_activations: True ## using gradient checkpointing
+  model_parallel_size: 1
+  # may need to set to pretrain if resuming from a pretraining checkpoint
+  mode: finetune
   load: "checkpoints/CogVideoX-5b-sat/transformer"
-  batch_size: 1
-  input_type: txt
-  input_file: configs/test.txt
-  sampling_num_frames: 13  # Must be 13, 11 or 9
-  sampling_fps: 8
-  bf16: True
-  output_dir: outputs/
-  force_inference: True
+  no_load_rng: True
+  train_iters: 5000
+  eval_iters: 1
+  eval_interval: 10000
+  eval_batch_size: 1
+  save: output/train
+  save_interval: 100
+  log_interval: 1
+  force_train: True
+  only_log_video_latents: True
+  lr_decay_style: "constant"
+  resume: auto
+  
+deepspeed:
+  train_micro_batch_size_per_gpu: 1
+  gradient_accumulation_steps: 1
+  steps_per_print: 50
+  gradient_clipping: 0.1
+  zero_optimization:
+    stage: 2
+    cpu_offload: false
+    contiguous_gradients: false
+    overlap_comm: true
+    reduce_scatter: true
+    reduce_bucket_size: 1000000000
+    allgather_bucket_size: 1000000000
+    load_from_fp32_weights: false
+  # zero_allow_untested_optimizer: true
+  zero_allow_untested_optimizer: false
+  bf16:
+    enabled: True
+  fp16:
+    enabled: False
+    loss_scale: 0
+    loss_scale_window: 400
+    hysteresis: 2
+    min_loss_scale: 1
+  optimizer:
+    # type: sat.ops.FusedEmaAdam
+    type: Adam
+    params:
+      lr: 1e-3
+      # lr: 5e-4
+      betas: [0.9, 0.95]
+      eps: 1e-8
+      weight_decay: 1e-4
+  activation_checkpointing:
+    partition_activations: false
+    contiguous_memory_optimization: false
+  wall_clock_breakdown: false
 
 model:
   scale_factor: 0.7 # different from cogvideox_2b_infer.yaml
   disable_first_stage_autocast: true
+  not_trainable_prefixes: ['all'] ## Using Lora
   log_keys:
     - txt
   
@@ -63,8 +108,12 @@ model:
           target: dit_video_concat.Rotary3DPositionEmbeddingMixin # different from cogvideox_2b_infer.yaml
           params:
             hidden_size_head: 64
-            text_length: 226
-            # text_length: 512
+            text_length: 512
+
+        lora_config: ## Using Lora
+          target: sat.model.finetune.lora2.LoraMixin
+          params:
+            r: 256
 
         patch_embed_config:
           target: dit_video_concat.ImagePatchEmbeddingMixin
@@ -89,8 +138,7 @@ model:
           target: sgm.modules.encoders.modules.FrozenT5Embedder
           params:
             model_dir: "checkpoints/t5-v1_1-xxl"
-            max_length: 226
-            # max_length: 512
+            max_length: 512
 
   # NOTE(xvjiarui): I tried differnet values for the temporal tiling window, for 450 frames
   # 8, 2: 118s, 215s
@@ -156,8 +204,7 @@ model:
               shift_scale: 1.0 # different from cogvideox_2b_infer.yaml
 
   sampler_config:
-    # target: sgm.modules.diffusionmodules.sampling.VPSDEDPMPP2MSampler
-    target: sgm.modules.diffusionmodules.sampling.VPODEDPMPP2MSampler
+    target: sgm.modules.diffusionmodules.sampling.VPSDEDPMPP2MSampler
     params:
       num_steps: 50
       verbose: True

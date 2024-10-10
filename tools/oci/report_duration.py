@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 START_MESSAGE = "building SATVideoDiffusionEngine model ..."
 
-def parse_log_file(file_path):
+def parse_log_file(file_path, up_to_now=False):
     with open(file_path, 'r') as file:
         content = file.read()
     
@@ -34,11 +34,12 @@ def parse_log_file(file_path):
         running_periods.append((current_start, last_time))
     
     is_interrupted_now = False
-    # Check if there's an ongoing interruption
-    current_time = datetime.now().replace(microsecond=0)
-    if last_time and (current_time - last_time) > timedelta(minutes=5):
-        interrupted_periods.append((last_time, current_time))
-        is_interrupted_now = True
+    if up_to_now:
+        # Check if there's an ongoing interruption
+        current_time = datetime.now().replace(microsecond=0)
+        if last_time and (current_time - last_time) > timedelta(minutes=5):
+            interrupted_periods.append((last_time, current_time))
+            is_interrupted_now = True
     
     result = []
     total_running_time = timedelta()
@@ -75,6 +76,7 @@ def parse_log_file(file_path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Calculate script runtime and interruptions from log file.")
     parser.add_argument("log_file", help="Path to the log file")
+    parser.add_argument("--now", action="store_true", help="Report up to the current time")
     args = parser.parse_args()
     
-    print(parse_log_file(args.log_file))
+    print(parse_log_file(args.log_file, args.now))

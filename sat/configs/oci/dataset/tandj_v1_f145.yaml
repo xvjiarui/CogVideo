@@ -1,0 +1,16 @@
+args:
+  train_data: ["data/tandj/metadata/min180_thr3_max240/tandj_recap_ep114.jsonl"]
+  valid_data: ["data/tandj/metadata/min180_thr3_max240/tandj_recap_ep114.jsonl"]
+  split: 1,0,0
+  num_workers: 2
+
+data:
+    target: data_video_oci.SftJsonlDatasetV2
+    params:
+      video_folder: data/tandj/clips_min180_thr3_max240/
+      text_key: text
+      video_size: [480, 720]
+      fps: 8
+      filter_metadata: false
+      max_num_frames: 145
+      skip_frms_num: 0.

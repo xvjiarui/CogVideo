@@ -1,13 +1,13 @@
 args:
-  train_data: ["data/tandj/metadata/min60_thr3_max80/tandj_recap_ep114.jsonl"]
-  valid_data: ["data/tandj/metadata/min60_thr3_max80/tandj_recap_ep114.jsonl"]
+  train_data: ["data/tandj/metadata/g6s/tandj_recap.jsonl"]
+  valid_data: ["data/tandj/metadata/g6s/tandj_recap.jsonl"]
   split: 1,0,0
   num_workers: 2
 
 data:
     target: data_video_oci.SftJsonlDatasetV2
     params:
-      video_folder: data/tandj/clips_min60_thr3_max80/
+      video_folder: data/tandj/clips_g6s/
       text_key: text
       video_size: [480, 720]
       fps: 8
