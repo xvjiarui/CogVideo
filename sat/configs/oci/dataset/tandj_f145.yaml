@@ -1,6 +1,6 @@
 args:
-  train_data: ["data/tandj/metadata/default/tandj_recap.jsonl"]
-  valid_data: ["data/tandj/metadata/default/tandj_recap.jsonl"]
+  train_data: ["data/tandj/metadata/min180_thr3_max240/tandj_recap_ep114.jsonl"]
+  valid_data: ["data/tandj/metadata/min180_thr3_max240/tandj_recap_ep114.jsonl"]
   split: 1,0,0
   num_workers: 2
 

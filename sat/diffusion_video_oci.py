@@ -106,7 +106,9 @@ class SATVideoDiffusionEngine(nn.Module):
                     flag = True
                     break
 
-            lora_prefix = ["matrix_A", "matrix_B", "mamba"]
+            # NOTE(xvjiarui): the trainable parameters are only the LoRA matrices and the SSM layer
+            # TODO(xvjiarui): hardcode is not a good idea, but it's fine for now
+            lora_prefix = ["matrix_A", "matrix_B", "mamba", "ssm"]
             for prefix in lora_prefix:
                 if prefix in n:
                     flag = False

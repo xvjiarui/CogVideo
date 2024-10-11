@@ -8,6 +8,10 @@ sat/
     submitit_sample_video.py
     train_video_oci.py
     sample_video_oci.py
+    submitit_batch_train_video.py
+    submitit_batch_sample_video.py
+    submitit_batch_train_video_config.yaml
+    submitit_batch_sample_video_config.yaml
 ```
 `sat` contains the source codebase for training and sampling, without using HF diffusers.
 Datasets are stored in `data`, the outputs of training and sampling are stored in `output`.
@@ -32,7 +36,7 @@ srun --time=240  -A nvr_lpr_nvgptvision --partition interactive --gpus 8 -c 248 
 
 Example command:
 ```bash
-torchrun --nproc-per-node=8 train_video_oci.py --base configs/oci/sft/5b_full_mambad_f145_sft.yaml configs/oci/dataset/tandj_f145.yaml --tag debug-bs8 --save-interval 10
+torchrun --nproc-per-node=8 train_video_oci.py --base configs/oci/sft/5b_mambav2_pre_f145_sft.yaml configs/oci/dataset/tandj_f145.yaml --tag debug-bs8 --save-interval 10
 ```
 
 ### Run sampling with 1 GPU
@@ -44,18 +48,65 @@ CUDA_VISIBLE_DEVICES=0 python sample_video_oci.py --base configs/oci/sft/5b_mamb
 
 ## Launching jobs in SLURM
 
-### Run training with 32 GPUs
+We use [Submitit](https://github.com/facebookincubator/submitit) to manage jobs in SLURM, which handles automatic checkpointing, logging, and resubmission.
+
+### Run training with 64 GPUs
 
 Example command:
 ```bash
-python submitit_train_video.py --nodes 4 --base configs/oci/sft/2b_lora_mambav2_pre_f145_sft.yaml configs/oci/dataset/osp_pixabay_v2_f145.yaml --tag 5k-bs32-v2 --wandb
+python submitit_train_video.py --nodes 8 --base configs/oci/sft/5b_t512_lora_f49_sft.yaml configs/oci/dataset/tandj_g6s_f49.yaml --tag 5k-bs64-v3 --wandb
 ```
 
-### Run sampling of 2 models with 1 GPU each
+
+### Run multiple training jobs with 64 GPUs each
+
+Example config file:
+```yaml
+jobs:
+  - cmd_args:
+      nodes: 8
+      base: 
+        - configs/oci/sft/5b_t512_lora_f49_sft.yaml
+        - configs/oci/dataset/tandj_g6s_f49.yaml
+      tag: 5k-bs64-v3
+      wandb: true
+```
 
 Example command:
 ```bash
-python submitit_sample_video.py --config-list configs/oci/sft/5b_mambav2_pre_f145_sft.yaml configs/oci/sft/5b_lora_mambav2_pre_f145_sft.yaml --common-configs configs/oci/inference/f145_infer.yaml --suffix osp_pixabay_v2_f145/5k-bs32-v2/checkpoints/ --input-file configs/test_pixabay.txt
+python submitit_batch_train_video.py --batch-config submitit_batch_train_video_config.yaml
+```
+
+### Run sampling with 1 GPU
+
+Example command:
+```bash
+python submitit_sample_video.py --config configs/oci/sft/5b_t512_lora_f49_sft.yaml --extra-configs configs/oci/inference/f49_infer.yaml --suffix tandj_g6s_f49/5k-bs64-v3/checkpoints/ --input-file configs/test_tandj_g6s.txt
+```
+
+### Run multiple sampling jobs with 1 GPU each
+
+Example config file:
+```yaml
+jobs:
+  - config: configs/oci/sft/5b_t512_lora_f49_sft.yaml
+    extra_configs:
+      - configs/oci/inference/f49_infer.yaml
+    cmd_args:
+      suffix: tandj_g6s_f49/5k-bs64-v3/checkpoints/
+      input-file: configs/test_tandj_g6s.txt
+```
+
+Example command:
+```bash
+python submitit_batch_sample_video.py --batch-config submitit_batch_sample_video_config.yaml
+```
+
+### Misc
+
+We also provide a script to check the percentage of pending/running time of jobs:
+```bash
+python ../tools/oci/report_duration.py output/train/5b_lora_f49_sft_tandj_g6s_f49/10k-bs64-v3/logs/log.txt
 ```
 
 ## Datasets

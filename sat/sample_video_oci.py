@@ -125,6 +125,7 @@ def main(args):
         model = get_model(args, model_cls)
     else:
         model = model_cls
+    print(model.model)
 
     load_checkpoint(model, args)
     if args.resume and args.resume != 'auto':
